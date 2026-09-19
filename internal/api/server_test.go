@@ -55,6 +55,18 @@ func (f *fakeHypervisor) Reboot(_ context.Context, name string, _ hypervisor.Pow
 	f.action, f.actionVM = "reboot", name
 	return hypervisor.ActionResult{Name: "database", UUID: "52d7a2fe-1942-4a89-93d9-9a57d8f67b6d", State: "running", Status: "reboot-requested"}, f.err
 }
+func (f *fakeHypervisor) Pause(_ context.Context, name string) (hypervisor.ActionResult, error) {
+	f.action = "pause"
+	return hypervisor.ActionResult{Name: name, State: "paused"}, f.err
+}
+func (f *fakeHypervisor) Resume(_ context.Context, name string) (hypervisor.ActionResult, error) {
+	f.action = "resume"
+	return hypervisor.ActionResult{Name: name, State: "running"}, f.err
+}
+func (f *fakeHypervisor) Reset(_ context.Context, name string) (hypervisor.ActionResult, error) {
+	f.action = "reset"
+	return hypervisor.ActionResult{Name: name, State: "running"}, f.err
+}
 func (f *fakeHypervisor) Stop(_ context.Context, name string) (hypervisor.ActionResult, error) {
 	f.action, f.actionVM = "stop", name
 	return hypervisor.ActionResult{Name: "database", UUID: "52d7a2fe-1942-4a89-93d9-9a57d8f67b6d", State: "shutoff"}, f.err
@@ -180,6 +192,20 @@ func TestRejectsInvalidPowerMode(t *testing.T) {
 	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/actions/shutdown", strings.NewReader(`{"mode":"magic"}`)))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_mode") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPauseResumeAndResetRoutes(t *testing.T) {
+	fake := &fakeHypervisor{}
+	handler := New(fake, Options{})
+	for _, test := range []struct{ path, action, state string }{
+		{"pause", "pause", "paused"}, {"resume", "resume", "running"}, {"reset", "reset", "running"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/actions/"+test.path, nil))
+		if response.Code != http.StatusOK || fake.action != test.action || !strings.Contains(response.Body.String(), `"state":"`+test.state+`"`) {
+			t.Fatalf("%s: status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
 	}
 }
 

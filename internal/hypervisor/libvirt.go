@@ -369,6 +369,66 @@ func (l *Libvirt) Reboot(_ context.Context, identifier string, mode PowerMode) (
 	return ActionResult{Name: name, UUID: uuid, State: StateName(int(state)), Status: "reboot-requested"}, nil
 }
 
+func (l *Libvirt) Pause(_ context.Context, identifier string) (ActionResult, error) {
+	return l.simpleAction(identifier, "paused", "pause", func(domain *libvirt.Domain, state libvirt.DomainState) error {
+		if state == libvirt.DOMAIN_PAUSED {
+			return fmt.Errorf("%w: domain is already paused", ErrConflict)
+		}
+		return domain.Suspend()
+	})
+}
+
+func (l *Libvirt) Resume(_ context.Context, identifier string) (ActionResult, error) {
+	return l.simpleAction(identifier, "running", "resume", func(domain *libvirt.Domain, state libvirt.DomainState) error {
+		if state != libvirt.DOMAIN_PAUSED {
+			return fmt.Errorf("%w: domain is not paused", ErrConflict)
+		}
+		return domain.Resume()
+	})
+}
+
+func (l *Libvirt) Reset(_ context.Context, identifier string) (ActionResult, error) {
+	return l.simpleAction(identifier, "running", "reset", func(domain *libvirt.Domain, _ libvirt.DomainState) error { return domain.Reset(0) })
+}
+
+func (l *Libvirt) simpleAction(identifier, resultState, action string, operation func(*libvirt.Domain, libvirt.DomainState) error) (ActionResult, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	unlock := l.lockDomainAction(uuid)
+	defer unlock()
+	active, err := domain.IsActive()
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("get domain %q activity: %w", name, err)
+	}
+	if !active {
+		return ActionResult{}, fmt.Errorf("%w: domain %q is stopped", ErrConflict, name)
+	}
+	state, _, err := domain.GetState()
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("get domain %q state: %w", name, err)
+	}
+	if err := operation(domain, state); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return ActionResult{}, fmt.Errorf("%w: cannot %s domain %q", err, action, name)
+		}
+		if errors.Is(err, libvirt.ERR_OPERATION_INVALID) {
+			return ActionResult{}, fmt.Errorf("%w: cannot %s domain %q in its current state", ErrConflict, action, name)
+		}
+		if errors.Is(err, libvirt.ERR_NO_SUPPORT) || errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED) {
+			return ActionResult{}, fmt.Errorf("%w: domain %q does not support %s", ErrUnsupported, name, action)
+		}
+		return ActionResult{}, fmt.Errorf("%s domain %q: %w", action, name, err)
+	}
+	return ActionResult{Name: name, UUID: uuid, State: resultState}, nil
+}
+
 func (l *Libvirt) Stop(_ context.Context, identifier string) (ActionResult, error) {
 	domain, err := l.lookup(identifier)
 	if err != nil {

@@ -92,6 +92,9 @@ stable envelope:
 | `POST` | `/api/v1/vms/{identifier}/actions/start` | Start an inactive domain |
 | `POST` | `/api/v1/vms/{identifier}/actions/shutdown` | Request a graceful guest shutdown |
 | `POST` | `/api/v1/vms/{identifier}/actions/reboot` | Request a graceful guest reboot |
+| `POST` | `/api/v1/vms/{identifier}/actions/pause` | Pause a running domain |
+| `POST` | `/api/v1/vms/{identifier}/actions/resume` | Resume a paused domain |
+| `POST` | `/api/v1/vms/{identifier}/actions/reset` | Force-reset an active domain |
 | `POST` | `/api/v1/vms/{identifier}/actions/stop` | Force an active domain off immediately |
 
 VM list and detail objects include a stable libvirt `uuid`. Their numeric `id`

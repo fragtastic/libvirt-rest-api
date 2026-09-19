@@ -75,6 +75,9 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/start", scopeControl, s.vmStart)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/shutdown", scopeControl, s.vmShutdown)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/reboot", scopeControl, s.vmReboot)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/pause", scopeControl, s.vmPause)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/resume", scopeControl, s.vmResume)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/reset", scopeAdmin, s.vmReset)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/stop", scopeAdmin, s.vmStop)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
@@ -243,6 +246,16 @@ func (s *Server) vmReboot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) vmStop(w http.ResponseWriter, r *http.Request) {
 	s.runAction(w, r, http.StatusOK, s.hypervisor.Stop)
+}
+
+func (s *Server) vmPause(w http.ResponseWriter, r *http.Request) {
+	s.runAction(w, r, http.StatusOK, s.hypervisor.Pause)
+}
+func (s *Server) vmResume(w http.ResponseWriter, r *http.Request) {
+	s.runAction(w, r, http.StatusOK, s.hypervisor.Resume)
+}
+func (s *Server) vmReset(w http.ResponseWriter, r *http.Request) {
+	s.runAction(w, r, http.StatusOK, s.hypervisor.Reset)
 }
 
 func decodePowerMode(w http.ResponseWriter, r *http.Request) (hypervisor.PowerMode, bool) {

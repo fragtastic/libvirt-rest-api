@@ -86,6 +86,9 @@ type Service interface {
 	Start(context.Context, string) (ActionResult, error)
 	Shutdown(context.Context, string, PowerMode) (ActionResult, error)
 	Reboot(context.Context, string, PowerMode) (ActionResult, error)
+	Pause(context.Context, string) (ActionResult, error)
+	Resume(context.Context, string) (ActionResult, error)
+	Reset(context.Context, string) (ActionResult, error)
 	Stop(context.Context, string) (ActionResult, error)
 	Close() error
 }
