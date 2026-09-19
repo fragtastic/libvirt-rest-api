@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags libvirt_dlopen ./...
+
+      - name: Build release binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -tags libvirt_dlopen -o dist/virt-rest-api ./cmd/virt-rest-api
+
+      - name: Package release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          archive="virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz"
+          tar -C dist -czf "dist/$archive" virt-rest-api
+          cd dist
+          sha256sum "$archive" > "${archive}.sha256"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "dist/virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz" \
+            "dist/virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz.sha256" \
+            --generate-notes
