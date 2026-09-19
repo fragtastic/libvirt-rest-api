@@ -33,6 +33,12 @@ func (f *fakeHypervisor) ListDomains(_ context.Context, filter hypervisor.Domain
 	f.filter = filter
 	return f.domains, f.err
 }
+func (f *fakeHypervisor) Subscribe(_ context.Context, _ uint64) hypervisor.Subscription {
+	channel := make(chan hypervisor.LifecycleEvent, 1)
+	channel <- hypervisor.LifecycleEvent{ID: 7, Name: "web", Event: "started"}
+	close(channel)
+	return hypervisor.Subscription{Events: channel, Cancel: func() {}}
+}
 func (f *fakeHypervisor) Domain(context.Context, string) (hypervisor.DomainInfo, error) {
 	return f.domain, f.err
 }
@@ -99,6 +105,16 @@ func TestListVMs(t *testing.T) {
 	}
 	if fake.filter != hypervisor.DomainActive || !strings.Contains(response.Body.String(), `"uuid":"52d7a2fe-1942-4a89-93d9-9a57d8f67b6d"`) {
 		t.Fatalf("filter = %d, body = %s", fake.filter, response.Body.String())
+	}
+}
+
+func TestLifecycleEventStream(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	request.Header.Set("Last-Event-ID", "6")
+	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(response.Body.String(), "event: vm.lifecycle") || !strings.Contains(response.Body.String(), `"id":7`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

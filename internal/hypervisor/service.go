@@ -149,6 +149,7 @@ type Service interface {
 	DomainInterfaces(context.Context, string, InterfaceAddressSource) (DomainInterfaces, error)
 	Autostart(context.Context, string) (Autostart, error)
 	SetAutostart(context.Context, string, bool) (Autostart, error)
+	Subscribe(context.Context, uint64) Subscription
 	DomainXML(context.Context, string) (string, error)
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)

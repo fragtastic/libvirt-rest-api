@@ -15,10 +15,18 @@ import (
 )
 
 type Libvirt struct {
-	connection  *libvirt.Connect
-	locksMu     sync.Mutex
-	actionLocks map[string]*domainActionLock
+	connection      *libvirt.Connect
+	broker          *eventBroker
+	eventCallbackID int
+	locksMu         sync.Mutex
+	actionLocks     map[string]*domainActionLock
 }
+
+var eventSetup struct {
+	once sync.Once
+	err  error
+}
+var eventRunner sync.Once
 
 type domainActionLock struct {
 	mutex sync.Mutex
@@ -26,19 +34,86 @@ type domainActionLock struct {
 }
 
 func Connect(uri string) (*Libvirt, error) {
+	eventSetup.once.Do(func() { eventSetup.err = libvirt.EventRegisterDefaultImpl() })
+	if eventSetup.err != nil {
+		return nil, fmt.Errorf("initialize libvirt events: %w", eventSetup.err)
+	}
 	connection, err := libvirt.NewConnect(uri)
 	if err != nil {
 		return nil, fmt.Errorf("connect to libvirt: %w", err)
 	}
-	return &Libvirt{connection: connection}, nil
+	service := &Libvirt{connection: connection, broker: newEventBroker(), eventCallbackID: -1}
+	callbackID, err := connection.DomainEventLifecycleRegister(nil, service.recordLifecycleEvent)
+	if err != nil {
+		connection.Close()
+		return nil, fmt.Errorf("register lifecycle events: %w", err)
+	}
+	service.eventCallbackID = callbackID
+	eventRunner.Do(func() {
+		go func() {
+			for {
+				if err := libvirt.EventRunDefaultImpl(); err != nil {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+		}()
+	})
+	return service, nil
 }
 
 func (l *Libvirt) Close() error {
+	if l.eventCallbackID >= 0 {
+		_ = l.connection.DomainEventDeregister(l.eventCallbackID)
+	}
+	if l.broker != nil {
+		l.broker.close()
+	}
 	_, err := l.connection.Close()
 	if err != nil {
 		return fmt.Errorf("close libvirt connection: %w", err)
 	}
 	return nil
+}
+
+func (l *Libvirt) Subscribe(ctx context.Context, after uint64) Subscription {
+	return l.broker.subscribe(ctx, after)
+}
+
+func (l *Libvirt) recordLifecycleEvent(_ *libvirt.Connect, domain *libvirt.Domain, event *libvirt.DomainEventLifecycle) {
+	name, err := domain.GetName()
+	if err != nil {
+		return
+	}
+	uuid, err := domain.GetUUIDString()
+	if err != nil {
+		return
+	}
+	l.broker.publish(LifecycleEvent{Name: name, UUID: uuid, Event: lifecycleEventName(event.Event), Detail: event.Detail})
+}
+
+func lifecycleEventName(event libvirt.DomainEventType) string {
+	switch event {
+	case libvirt.DOMAIN_EVENT_DEFINED:
+		return "defined"
+	case libvirt.DOMAIN_EVENT_UNDEFINED:
+		return "undefined"
+	case libvirt.DOMAIN_EVENT_STARTED:
+		return "started"
+	case libvirt.DOMAIN_EVENT_SUSPENDED:
+		return "suspended"
+	case libvirt.DOMAIN_EVENT_RESUMED:
+		return "resumed"
+	case libvirt.DOMAIN_EVENT_STOPPED:
+		return "stopped"
+	case libvirt.DOMAIN_EVENT_SHUTDOWN:
+		return "shutdown"
+	case libvirt.DOMAIN_EVENT_PMSUSPENDED:
+		return "suspended-to-memory"
+	case libvirt.DOMAIN_EVENT_CRASHED:
+		return "crashed"
+	default:
+		return "unknown"
+	}
 }
 
 func (l *Libvirt) Ready(context.Context) error {

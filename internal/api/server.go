@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +70,7 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/api/v1/host", scopeRead, s.host)
 	s.handle(routes, http.MethodGet, "/api/v1/host/stats", scopeRead, s.hostStats)
 	s.handle(routes, http.MethodGet, "/api/v1/vms", scopeRead, s.listVMs)
+	s.handle(routes, http.MethodGet, "/api/v1/events", scopeRead, s.events)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/stats", scopeRead, s.vmStats)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/interfaces", scopeRead, s.vmInterfaces)
@@ -182,6 +184,57 @@ func (s *Server) listVMs(w http.ResponseWriter, r *http.Request) {
 		domains = []hypervisor.Domain{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"vms": domains})
+}
+
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming_unsupported", "streaming is unavailable")
+		return
+	}
+	after := uint64(0)
+	if value := r.Header.Get("Last-Event-ID"); value != "" {
+		parsed, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be an unsigned integer")
+			return
+		}
+		after = parsed
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, ": connected\n\n")
+	flusher.Flush()
+	subscription := s.hypervisor.Subscribe(r.Context(), after)
+	defer subscription.Cancel()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case event, open := <-subscription.Events:
+			if !open {
+				return
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "id: %d\nevent: vm.lifecycle\ndata: %s\n\n", event.ID, data); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-heartbeat.C:
+			if _, err := io.WriteString(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func (s *Server) vm(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +502,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

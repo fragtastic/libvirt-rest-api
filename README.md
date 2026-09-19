@@ -86,6 +86,7 @@ stable envelope:
 | `GET` | `/api/v1/host` | Hypervisor host information |
 | `GET` | `/api/v1/host/stats` | Timestamped cumulative host CPU and memory counters |
 | `GET` | `/api/v1/vms?state=all` | List domains; state may be `all`, `active`, or `inactive` |
+| `GET` | `/api/v1/events` | Server-sent VM lifecycle events with `Last-Event-ID` replay |
 | `GET` | `/api/v1/vms/{identifier}` | Domain state and resource information |
 | `GET` | `/api/v1/vms/{identifier}/stats` | Timestamped cumulative CPU, memory, disk, and network counters |
 | `GET` | `/api/v1/vms/{identifier}/interfaces?source=lease` | Interface addresses from `lease`, `agent`, or `arp` |
