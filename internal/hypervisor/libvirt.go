@@ -29,8 +29,8 @@ var eventSetup struct {
 var eventRunner sync.Once
 
 type domainActionLock struct {
-	mutex sync.Mutex
-	users int
+	semaphore chan struct{}
+	users     int
 }
 
 func Connect(uri string) (*Libvirt, error) {
@@ -75,8 +75,8 @@ func (l *Libvirt) Close() error {
 	return nil
 }
 
-func (l *Libvirt) Subscribe(ctx context.Context, after uint64) Subscription {
-	return l.broker.subscribe(ctx, after)
+func (l *Libvirt) Subscribe(ctx context.Context, cursor string) Subscription {
+	return l.broker.subscribe(ctx, cursor)
 }
 
 func (l *Libvirt) recordLifecycleEvent(_ *libvirt.Connect, domain *libvirt.Domain, event *libvirt.DomainEventLifecycle) {
@@ -792,27 +792,50 @@ func (l *Libvirt) Stop(_ context.Context, identifier string) (ActionResult, erro
 }
 
 func (l *Libvirt) lockDomainAction(name string) func() {
+	lock := l.retainDomainActionLock(name)
+	<-lock.semaphore
+	return func() {
+		lock.semaphore <- struct{}{}
+		l.releaseDomainActionLock(name, lock)
+	}
+}
+
+func (l *Libvirt) lockDomainActionContext(ctx context.Context, name string) (func(), error) {
+	lock := l.retainDomainActionLock(name)
+	select {
+	case <-lock.semaphore:
+		return func() {
+			lock.semaphore <- struct{}{}
+			l.releaseDomainActionLock(name, lock)
+		}, nil
+	case <-ctx.Done():
+		l.releaseDomainActionLock(name, lock)
+		return nil, ctx.Err()
+	}
+}
+
+func (l *Libvirt) retainDomainActionLock(name string) *domainActionLock {
 	l.locksMu.Lock()
+	defer l.locksMu.Unlock()
 	if l.actionLocks == nil {
 		l.actionLocks = make(map[string]*domainActionLock)
 	}
 	lock := l.actionLocks[name]
 	if lock == nil {
-		lock = &domainActionLock{}
+		lock = &domainActionLock{semaphore: make(chan struct{}, 1)}
+		lock.semaphore <- struct{}{}
 		l.actionLocks[name] = lock
 	}
 	lock.users++
-	l.locksMu.Unlock()
+	return lock
+}
 
-	lock.mutex.Lock()
-	return func() {
-		lock.mutex.Unlock()
-		l.locksMu.Lock()
-		lock.users--
-		if lock.users == 0 {
-			delete(l.actionLocks, name)
-		}
-		l.locksMu.Unlock()
+func (l *Libvirt) releaseDomainActionLock(name string, lock *domainActionLock) {
+	l.locksMu.Lock()
+	defer l.locksMu.Unlock()
+	lock.users--
+	if lock.users == 0 {
+		delete(l.actionLocks, name)
 	}
 }
 

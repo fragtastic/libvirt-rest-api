@@ -13,12 +13,15 @@ import (
 )
 
 type fakeHypervisor struct {
-	domains  []hypervisor.Domain
-	domain   hypervisor.DomainInfo
-	err      error
-	filter   hypervisor.DomainFilter
-	action   string
-	actionVM string
+	domains          []hypervisor.Domain
+	domain           hypervisor.DomainInfo
+	err              error
+	filter           hypervisor.DomainFilter
+	action           string
+	actionVM         string
+	snapshotRequest  hypervisor.SnapshotCreateRequest
+	snapshotName     string
+	snapshotChildren bool
 }
 
 func (f *fakeHypervisor) Ready(context.Context) error { return f.err }
@@ -33,9 +36,9 @@ func (f *fakeHypervisor) ListDomains(_ context.Context, filter hypervisor.Domain
 	f.filter = filter
 	return f.domains, f.err
 }
-func (f *fakeHypervisor) Subscribe(_ context.Context, _ uint64) hypervisor.Subscription {
+func (f *fakeHypervisor) Subscribe(_ context.Context, _ string) hypervisor.Subscription {
 	channel := make(chan hypervisor.LifecycleEvent, 1)
-	channel <- hypervisor.LifecycleEvent{ID: 7, Name: "web", Event: "started"}
+	channel <- hypervisor.LifecycleEvent{ID: 7, Cursor: "generation:7", Name: "web", Event: "started"}
 	close(channel)
 	return hypervisor.Subscription{Events: channel, Cancel: func() {}}
 }
@@ -53,6 +56,21 @@ func (f *fakeHypervisor) Autostart(context.Context, string) (hypervisor.Autostar
 }
 func (f *fakeHypervisor) SetAutostart(_ context.Context, _ string, enabled bool) (hypervisor.Autostart, error) {
 	return hypervisor.Autostart{Name: "web", Enabled: enabled}, f.err
+}
+func (f *fakeHypervisor) ListSnapshots(context.Context, string) ([]hypervisor.Snapshot, error) {
+	return []hypervisor.Snapshot{{Name: "clean", Current: true}}, f.err
+}
+func (f *fakeHypervisor) CreateSnapshot(_ context.Context, _ string, request hypervisor.SnapshotCreateRequest) (hypervisor.Snapshot, error) {
+	f.snapshotRequest = request
+	return hypervisor.Snapshot{Name: request.Name, Description: request.Description, Current: true}, f.err
+}
+func (f *fakeHypervisor) RevertSnapshot(_ context.Context, _, snapshot string, _ hypervisor.SnapshotRevertRequest) (hypervisor.SnapshotActionResult, error) {
+	f.snapshotName = snapshot
+	return hypervisor.SnapshotActionResult{Name: "web", Snapshot: snapshot, Status: "reverted"}, f.err
+}
+func (f *fakeHypervisor) DeleteSnapshot(_ context.Context, _, snapshot string, children bool) error {
+	f.snapshotName, f.snapshotChildren = snapshot, children
+	return f.err
 }
 func (f *fakeHypervisor) DomainXML(context.Context, string) (string, error) {
 	return "<domain><name>test</name></domain>", f.err
@@ -187,6 +205,76 @@ func TestSetAutostart(t *testing.T) {
 	}
 }
 
+func TestSnapshotRoutes(t *testing.T) {
+	fake := &fakeHypervisor{}
+	handler := New(fake, Options{})
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/vms/web/snapshots", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"clean"`) {
+		t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/snapshots", strings.NewReader(`{"name":"before-upgrade","description":"safe point","kind":"disk","quiesce":true}`)))
+	if response.Code != http.StatusCreated || fake.snapshotRequest.Name != "before-upgrade" || fake.snapshotRequest.Kind != hypervisor.SnapshotKindDisk || !fake.snapshotRequest.Quiesce {
+		t.Fatalf("create status=%d request=%+v body=%s", response.Code, fake.snapshotRequest, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/snapshots/before-upgrade/actions/revert", strings.NewReader(`{"state":"running"}`)))
+	if response.Code != http.StatusOK || fake.snapshotName != "before-upgrade" || !strings.Contains(response.Body.String(), `"status":"reverted"`) {
+		t.Fatalf("revert status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/v1/vms/web/snapshots/before-upgrade?children=true", nil))
+	if response.Code != http.StatusNoContent || fake.snapshotName != "before-upgrade" || !fake.snapshotChildren {
+		t.Fatalf("delete status=%d snapshot=%q children=%v", response.Code, fake.snapshotName, fake.snapshotChildren)
+	}
+}
+
+func TestSnapshotValidation(t *testing.T) {
+	handler := New(&fakeHypervisor{}, Options{})
+	tests := []struct {
+		path string
+		body string
+		code string
+	}{
+		{"/api/v1/vms/web/snapshots", `{"name":"../unsafe","kind":"system"}`, "invalid_snapshot_name"},
+		{"/api/v1/vms/web/snapshots", `{"name":"safe","kind":"memory"}`, "invalid_snapshot_kind"},
+		{"/api/v1/vms/web/snapshots", `{"name":"safe","kind":"system","quiesce":true}`, "invalid_snapshot_options"},
+		{"/api/v1/vms/web/snapshots", `{"name":"safe","kind":"system","extra":true}`, "invalid_request"},
+	}
+	for _, test := range tests {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body)))
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), test.code) {
+			t.Fatalf("body=%s status=%d response=%s", test.body, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestExistingSnapshotNamesAreAddressable(t *testing.T) {
+	fake := &fakeHypervisor{}
+	handler := New(fake, Options{})
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{"manual%20snapshot", "manual snapshot"},
+		{"更新前", "更新前"},
+		{"name%2Btag", "name+tag"},
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/snapshots/"+test.path+"/actions/revert", nil)
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || fake.snapshotName != test.want {
+			t.Fatalf("path=%q status=%d snapshot=%q body=%s", test.path, response.Code, fake.snapshotName, response.Body.String())
+		}
+	}
+}
+
 func TestActionsAndErrors(t *testing.T) {
 	fake := &fakeHypervisor{}
 	handler := New(fake, Options{})
@@ -305,6 +393,7 @@ func TestAuthorizationScopes(t *testing.T) {
 		{"control can read", "control", http.MethodGet, "/api/v1/host", http.StatusOK},
 		{"control can start", "control", http.MethodPost, "/api/v1/vms/web/actions/start", http.StatusOK},
 		{"control cannot force stop", "control", http.MethodPost, "/api/v1/vms/web/actions/stop", http.StatusForbidden},
+		{"control cannot create snapshot", "control", http.MethodPost, "/api/v1/vms/web/snapshots", http.StatusForbidden},
 		{"admin can force stop", "admin", http.MethodPost, "/api/v1/vms/web/actions/stop", http.StatusOK},
 	}
 	for _, test := range tests {

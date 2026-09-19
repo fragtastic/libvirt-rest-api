@@ -8,9 +8,10 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("domain not found")
-	ErrConflict    = errors.New("domain state conflict")
-	ErrUnsupported = errors.New("operation unsupported")
+	ErrNotFound         = errors.New("domain not found")
+	ErrSnapshotNotFound = errors.New("snapshot not found")
+	ErrConflict         = errors.New("domain state conflict")
+	ErrUnsupported      = errors.New("operation unsupported")
 )
 
 type DomainFilter uint32
@@ -139,6 +140,49 @@ type Autostart struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type SnapshotKind string
+
+const (
+	SnapshotKindSystem SnapshotKind = "system"
+	SnapshotKindDisk   SnapshotKind = "disk"
+)
+
+type Snapshot struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Parent      string     `json:"parent,omitempty"`
+	State       string     `json:"state,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	Current     bool       `json:"current"`
+}
+
+type SnapshotCreateRequest struct {
+	Name        string
+	Description string
+	Kind        SnapshotKind
+	Quiesce     bool
+}
+
+type SnapshotRevertState string
+
+const (
+	SnapshotRevertRecorded SnapshotRevertState = "snapshot"
+	SnapshotRevertRunning  SnapshotRevertState = "running"
+	SnapshotRevertPaused   SnapshotRevertState = "paused"
+)
+
+type SnapshotRevertRequest struct {
+	State SnapshotRevertState
+	Force bool
+}
+
+type SnapshotActionResult struct {
+	Name     string `json:"name"`
+	UUID     string `json:"uuid"`
+	Snapshot string `json:"snapshot"`
+	Status   string `json:"status"`
+}
+
 type Service interface {
 	Ready(context.Context) error
 	Host(context.Context) (Host, error)
@@ -149,7 +193,11 @@ type Service interface {
 	DomainInterfaces(context.Context, string, InterfaceAddressSource) (DomainInterfaces, error)
 	Autostart(context.Context, string) (Autostart, error)
 	SetAutostart(context.Context, string, bool) (Autostart, error)
-	Subscribe(context.Context, uint64) Subscription
+	ListSnapshots(context.Context, string) ([]Snapshot, error)
+	CreateSnapshot(context.Context, string, SnapshotCreateRequest) (Snapshot, error)
+	RevertSnapshot(context.Context, string, string, SnapshotRevertRequest) (SnapshotActionResult, error)
+	DeleteSnapshot(context.Context, string, string, bool) error
+	Subscribe(context.Context, string) Subscription
 	DomainXML(context.Context, string) (string, error)
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)

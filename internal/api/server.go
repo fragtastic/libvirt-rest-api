@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fragtastic/libvirt-rest-api/internal/hypervisor"
 )
@@ -76,6 +77,10 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/interfaces", scopeRead, s.vmInterfaces)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/autostart", scopeRead, s.vmAutostart)
 	s.handle(routes, http.MethodPatch, "/api/v1/vms/{identifier}/autostart", scopeAdmin, s.setVMAutostart)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/snapshots", scopeRead, s.listVMSnapshots)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/snapshots", scopeAdmin, s.createVMSnapshot)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/snapshots/{snapshot}/actions/revert", scopeAdmin, s.revertVMSnapshot)
+	s.handle(routes, http.MethodDelete, "/api/v1/vms/{identifier}/snapshots/{snapshot}", scopeAdmin, s.deleteVMSnapshot)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/xml", scopeRead, s.vmXML)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/viewer", scopeRead, s.vmViewer)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
@@ -192,15 +197,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "streaming_unsupported", "streaming is unavailable")
 		return
 	}
-	after := uint64(0)
-	if value := r.Header.Get("Last-Event-ID"); value != "" {
-		parsed, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be an unsigned integer")
-			return
-		}
-		after = parsed
-	}
+	cursor := r.Header.Get("Last-Event-ID")
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -208,7 +205,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, ": connected\n\n")
 	flusher.Flush()
-	subscription := s.hypervisor.Subscribe(r.Context(), after)
+	subscription := s.hypervisor.Subscribe(r.Context(), cursor)
 	defer subscription.Cancel()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -218,11 +215,22 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
+			if event.StreamReset {
+				data, err := json.Marshal(map[string]any{"id": event.ID, "occurred_at": event.OccurredAt, "reason": "replay_unavailable"})
+				if err != nil {
+					return
+				}
+				if _, err := fmt.Fprintf(w, "id: %s\nevent: stream.reset\ndata: %s\n\n", event.Cursor, data); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
 			data, err := json.Marshal(event)
 			if err != nil {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "id: %d\nevent: vm.lifecycle\ndata: %s\n\n", event.ID, data); err != nil {
+			if _, err := fmt.Fprintf(w, "id: %s\nevent: vm.lifecycle\ndata: %s\n\n", event.Cursor, data); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -297,6 +305,111 @@ func (s *Server) setVMAutostart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, value)
+}
+
+func (s *Server) listVMSnapshots(w http.ResponseWriter, r *http.Request) {
+	snapshots, err := s.hypervisor.ListSnapshots(r.Context(), r.PathValue("identifier"))
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	if snapshots == nil {
+		snapshots = []hypervisor.Snapshot{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"snapshots": snapshots})
+}
+
+func (s *Server) createVMSnapshot(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name        string                  `json:"name"`
+		Description string                  `json:"description"`
+		Kind        hypervisor.SnapshotKind `json:"kind"`
+		Quiesce     bool                    `json:"quiesce"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be one JSON object")
+		return
+	}
+	if !validSnapshotName(request.Name) {
+		writeError(w, http.StatusBadRequest, "invalid_snapshot_name", "name must be 1-128 ASCII letters, numbers, dots, underscores, or hyphens and must start with a letter or number")
+		return
+	}
+	if len(request.Description) > 1024 {
+		writeError(w, http.StatusBadRequest, "invalid_description", "description must not exceed 1024 bytes")
+		return
+	}
+	if request.Kind != hypervisor.SnapshotKindSystem && request.Kind != hypervisor.SnapshotKindDisk {
+		writeError(w, http.StatusBadRequest, "invalid_snapshot_kind", "kind must be system or disk")
+		return
+	}
+	if request.Quiesce && request.Kind != hypervisor.SnapshotKindDisk {
+		writeError(w, http.StatusBadRequest, "invalid_snapshot_options", "quiesce is only valid for disk snapshots")
+		return
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	snapshot, err := s.hypervisor.CreateSnapshot(r.Context(), r.PathValue("identifier"), hypervisor.SnapshotCreateRequest{
+		Name: request.Name, Description: request.Description, Kind: request.Kind, Quiesce: request.Quiesce,
+	})
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, snapshot)
+}
+
+func (s *Server) revertVMSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapshotName := r.PathValue("snapshot")
+	if !validSnapshotLookupName(snapshotName) {
+		writeError(w, http.StatusBadRequest, "invalid_snapshot_name", "invalid snapshot name")
+		return
+	}
+	request := struct {
+		State hypervisor.SnapshotRevertState `json:"state"`
+		Force bool                           `json:"force"`
+	}{State: hypervisor.SnapshotRevertRecorded}
+	if r.ContentLength != 0 {
+		if err := decodeJSON(r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "request body must be one JSON object")
+			return
+		}
+	}
+	if request.State == "" {
+		request.State = hypervisor.SnapshotRevertRecorded
+	}
+	if request.State != hypervisor.SnapshotRevertRecorded && request.State != hypervisor.SnapshotRevertRunning && request.State != hypervisor.SnapshotRevertPaused {
+		writeError(w, http.StatusBadRequest, "invalid_revert_state", "state must be snapshot, running, or paused")
+		return
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	result, err := s.hypervisor.RevertSnapshot(r.Context(), r.PathValue("identifier"), snapshotName, hypervisor.SnapshotRevertRequest{State: request.State, Force: request.Force})
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) deleteVMSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapshotName := r.PathValue("snapshot")
+	if !validSnapshotLookupName(snapshotName) {
+		writeError(w, http.StatusBadRequest, "invalid_snapshot_name", "invalid snapshot name")
+		return
+	}
+	children := false
+	if value := r.URL.Query().Get("children"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_children", "children must be true or false")
+			return
+		}
+		children = parsed
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	if err := s.hypervisor.DeleteSnapshot(r.Context(), r.PathValue("identifier"), snapshotName, children); err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) vmXML(w http.ResponseWriter, r *http.Request) {
@@ -426,10 +539,46 @@ func parseDomainFilter(value string) (hypervisor.DomainFilter, bool) {
 	}
 }
 
+func decodeJSON(r *http.Request, destination any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
+}
+
+func validSnapshotName(name string) bool {
+	if len(name) == 0 || len(name) > 128 || !isASCIILetterOrNumber(name[0]) {
+		return false
+	}
+	for index := 1; index < len(name); index++ {
+		character := name[index]
+		if !isASCIILetterOrNumber(character) && character != '.' && character != '_' && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validSnapshotLookupName(name string) bool {
+	return len(name) > 0 && len(name) <= 1024 && utf8.ValidString(name) && !strings.ContainsRune(name, '\x00')
+}
+
+func isASCIILetterOrNumber(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
+}
+
 func (s *Server) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, hypervisor.ErrNotFound):
 		writeError(w, http.StatusNotFound, "vm_not_found", "virtual machine not found")
+	case errors.Is(err, hypervisor.ErrSnapshotNotFound):
+		writeError(w, http.StatusNotFound, "snapshot_not_found", "snapshot not found")
 	case errors.Is(err, hypervisor.ErrConflict):
 		writeError(w, http.StatusConflict, "state_conflict", err.Error())
 	case errors.Is(err, hypervisor.ErrUnsupported):

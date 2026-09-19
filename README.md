@@ -86,12 +86,16 @@ stable envelope:
 | `GET` | `/api/v1/host` | Hypervisor host information |
 | `GET` | `/api/v1/host/stats` | Timestamped cumulative host CPU and memory counters |
 | `GET` | `/api/v1/vms?state=all` | List domains; state may be `all`, `active`, or `inactive` |
-| `GET` | `/api/v1/events` | Server-sent VM lifecycle events with `Last-Event-ID` replay |
+| `GET` | `/api/v1/events` | Server-sent VM lifecycle events with bounded `Last-Event-ID` replay and `stream.reset` gap notices |
 | `GET` | `/api/v1/vms/{identifier}` | Domain state and resource information |
 | `GET` | `/api/v1/vms/{identifier}/stats` | Timestamped cumulative CPU, memory, disk, and network counters |
 | `GET` | `/api/v1/vms/{identifier}/interfaces?source=lease` | Interface addresses from `lease`, `agent`, or `arp` |
 | `GET` | `/api/v1/vms/{identifier}/autostart` | Read host-boot autostart configuration |
 | `PATCH` | `/api/v1/vms/{identifier}/autostart` | Set autostart with `{"enabled":true}` (admin) |
+| `GET` | `/api/v1/vms/{identifier}/snapshots` | List snapshot metadata |
+| `POST` | `/api/v1/vms/{identifier}/snapshots` | Create an atomic system or disk snapshot (admin) |
+| `POST` | `/api/v1/vms/{identifier}/snapshots/{snapshot}/actions/revert` | Revert to a snapshot (admin) |
+| `DELETE` | `/api/v1/vms/{identifier}/snapshots/{snapshot}?children=false` | Delete a snapshot, optionally with descendants (admin) |
 | `GET` | `/api/v1/vms/{identifier}/xml` | Raw libvirt domain XML as `application/xml` |
 | `GET` | `/api/v1/vms/{identifier}/viewer` | First configured graphics listener |
 | `GET` | `/api/v1/vms/{identifier}/screenshot` | Current display in libvirt's native image format |
@@ -106,6 +110,12 @@ stable envelope:
 VM list and detail objects include a stable libvirt `uuid`. Their numeric `id`
 is a transient runtime identifier and is `-1` while the VM is inactive.
 Every `{identifier}` path parameter accepts either the VM name or its UUID.
+
+Create snapshots with `{"name":"before-upgrade","kind":"system"}` or a
+disk-only snapshot with `{"name":"backup","kind":"disk","quiesce":true}`.
+Quiescing requires a responsive guest agent. Revert accepts optional
+`{"state":"snapshot","force":false}`; state may be `snapshot`, `running`, or
+`paused`. Snapshot mutations are synchronous and may take significant time.
 
 Graceful shutdown is asynchronous: a successfully accepted request returns
 `202 Accepted` with status `shutdown-requested` and the currently observed VM
