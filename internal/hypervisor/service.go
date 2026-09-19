@@ -68,6 +68,7 @@ type Screenshot struct {
 }
 
 type Service interface {
+	Ready(context.Context) error
 	Host(context.Context) (Host, error)
 	ListDomains(context.Context, DomainFilter) ([]Domain, error)
 	Domain(context.Context, string) (DomainInfo, error)

@@ -82,6 +82,7 @@ stable envelope:
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/healthz` | Process liveness; intentionally does not contact libvirt or require auth |
+| `GET` | `/readyz` | Libvirt connection readiness; does not require auth |
 | `GET` | `/api/v1/host` | Hypervisor host information |
 | `GET` | `/api/v1/vms?state=all` | List domains; state may be `all`, `active`, or `inactive` |
 | `GET` | `/api/v1/vms/{identifier}` | Domain state and resource information |

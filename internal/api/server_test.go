@@ -21,6 +21,8 @@ type fakeHypervisor struct {
 	actionVM string
 }
 
+func (f *fakeHypervisor) Ready(context.Context) error { return f.err }
+
 func (f *fakeHypervisor) Host(context.Context) (hypervisor.Host, error) {
 	return hypervisor.Host{Name: "test-host", CPUs: 8}, f.err
 }
@@ -66,6 +68,22 @@ func TestListVMs(t *testing.T) {
 	}
 	if fake.filter != hypervisor.DomainActive || !strings.Contains(response.Body.String(), `"uuid":"52d7a2fe-1942-4a89-93d9-9a57d8f67b6d"`) {
 		t.Fatalf("filter = %d, body = %s", fake.filter, response.Body.String())
+	}
+}
+
+func TestReadiness(t *testing.T) {
+	fake := &fakeHypervisor{}
+	handler := New(fake, Options{BearerToken: "secret"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ready"`) {
+		t.Fatalf("ready status = %d, body = %s", response.Code, response.Body.String())
+	}
+	fake.err = errors.New("disconnected")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "disconnected") {
+		t.Fatalf("failed status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 

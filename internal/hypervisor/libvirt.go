@@ -40,6 +40,17 @@ func (l *Libvirt) Close() error {
 	return nil
 }
 
+func (l *Libvirt) Ready(context.Context) error {
+	alive, err := l.connection.IsAlive()
+	if err != nil {
+		return fmt.Errorf("check libvirt connection: %w", err)
+	}
+	if !alive {
+		return errors.New("libvirt connection is not alive")
+	}
+	return nil
+}
+
 func (l *Libvirt) Host(context.Context) (Host, error) {
 	name, err := l.connection.GetHostname()
 	if err != nil {

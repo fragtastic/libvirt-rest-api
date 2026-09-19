@@ -65,6 +65,7 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	mux := http.NewServeMux()
 	routes := newRouteRegistry(mux)
 	s.handle(routes, http.MethodGet, "/healthz", scopePublic, s.health)
+	s.handle(routes, http.MethodGet, "/readyz", scopePublic, s.ready)
 	s.handle(routes, http.MethodGet, "/api/v1/host", scopeRead, s.host)
 	s.handle(routes, http.MethodGet, "/api/v1/vms", scopeRead, s.listVMs)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
@@ -128,6 +129,15 @@ func (r *routeRegistry) handle(method, path string, handler http.HandlerFunc) {
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if err := s.hypervisor.Ready(r.Context()); err != nil {
+		s.logger.Warn("readiness check failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "hypervisor_unavailable", "hypervisor is not ready")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) host(w http.ResponseWriter, r *http.Request) {
