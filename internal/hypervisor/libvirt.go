@@ -242,6 +242,65 @@ func (l *Libvirt) Start(_ context.Context, identifier string) (ActionResult, err
 	return ActionResult{Name: name, UUID: uuid, State: "running"}, nil
 }
 
+func (l *Libvirt) Shutdown(_ context.Context, identifier string) (ActionResult, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	unlock := l.lockDomainAction(uuid)
+	defer unlock()
+	state, err := requestGracefulShutdown(name, domain)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{Name: name, UUID: uuid, State: state, Status: "shutdown-requested"}, nil
+}
+
+type gracefulShutdownDomain interface {
+	IsActive() (bool, error)
+	GetState() (libvirt.DomainState, int, error)
+	Shutdown() error
+}
+
+func requestGracefulShutdown(name string, domain gracefulShutdownDomain) (string, error) {
+	active, err := domain.IsActive()
+	if err != nil {
+		return "", fmt.Errorf("get domain %q activity: %w", name, err)
+	}
+	if !active {
+		return "", fmt.Errorf("%w: domain %q is already stopped", ErrConflict, name)
+	}
+	state, _, err := domain.GetState()
+	if err != nil {
+		return "", fmt.Errorf("get domain %q state: %w", name, err)
+	}
+	if err := domain.Shutdown(); err != nil {
+		if active, stateErr := domain.IsActive(); stateErr == nil && !active {
+			return "", fmt.Errorf("%w: domain %q is already stopped", ErrConflict, name)
+		}
+		switch {
+		case errors.Is(err, libvirt.ERR_OPERATION_INVALID):
+			return "", fmt.Errorf("%w: graceful shutdown cannot be requested for domain %q in its current state", ErrConflict, name)
+		case errors.Is(err, libvirt.ERR_NO_SUPPORT),
+			errors.Is(err, libvirt.ERR_CONFIG_UNSUPPORTED),
+			errors.Is(err, libvirt.ERR_ARGUMENT_UNSUPPORTED),
+			errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED):
+			return "", fmt.Errorf("%w: domain %q does not support graceful shutdown", ErrUnsupported, name)
+		default:
+			return "", fmt.Errorf("request graceful shutdown for domain %q: %w", name, err)
+		}
+	}
+	if current, _, stateErr := domain.GetState(); stateErr == nil {
+		state = current
+	}
+	return StateName(int(state)), nil
+}
+
 func (l *Libvirt) Stop(_ context.Context, identifier string) (ActionResult, error) {
 	domain, err := l.lookup(identifier)
 	if err != nil {

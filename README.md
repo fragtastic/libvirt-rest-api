@@ -80,16 +80,21 @@ stable envelope:
 | `GET` | `/api/v1/vms/{identifier}/viewer` | First configured graphics listener |
 | `GET` | `/api/v1/vms/{identifier}/screenshot` | Current display in libvirt's native image format |
 | `POST` | `/api/v1/vms/{identifier}/actions/start` | Start an inactive domain |
-| `POST` | `/api/v1/vms/{identifier}/actions/stop` | Immediately stop an active domain |
+| `POST` | `/api/v1/vms/{identifier}/actions/shutdown` | Request a graceful guest shutdown |
+| `POST` | `/api/v1/vms/{identifier}/actions/stop` | Force an active domain off immediately |
 
 VM list and detail objects include a stable libvirt `uuid`. Their numeric `id`
 is a transient runtime identifier and is `-1` while the VM is inactive.
 Every `{identifier}` path parameter accepts either the VM name or its UUID.
 
-Successful start and stop operations return the resulting state. Repeating an
-action that conflicts with the current state returns `409 Conflict`. A missing
-domain returns `404 Not Found`; unavailable libvirt operations return 503
-Service Unavailable without exposing internal connection details.
+Graceful shutdown is asynchronous: a successfully accepted request returns
+`202 Accepted` with status `shutdown-requested` and the currently observed VM
+state, but guest cooperation determines when shutdown completes. Start and
+force-stop return `200 OK`. Repeating an action that conflicts with the current
+state returns `409 Conflict`; a guest without graceful-shutdown support returns
+`422 Unprocessable Entity`. A missing domain returns `404 Not Found`;
+unavailable libvirt operations return 503 Service Unavailable without exposing
+internal connection details.
 
 ## Extending the API
 

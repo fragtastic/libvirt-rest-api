@@ -54,6 +54,7 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}/viewer", s.vmViewer)
 	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}/screenshot", s.vmScreenshot)
 	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/start", s.vmStart)
+	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/shutdown", s.vmShutdown)
 	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/stop", s.vmStop)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
@@ -178,21 +179,25 @@ func (s *Server) vmScreenshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) vmStart(w http.ResponseWriter, r *http.Request) {
-	s.runAction(w, r, s.hypervisor.Start)
+	s.runAction(w, r, http.StatusOK, s.hypervisor.Start)
+}
+
+func (s *Server) vmShutdown(w http.ResponseWriter, r *http.Request) {
+	s.runAction(w, r, http.StatusAccepted, s.hypervisor.Shutdown)
 }
 
 func (s *Server) vmStop(w http.ResponseWriter, r *http.Request) {
-	s.runAction(w, r, s.hypervisor.Stop)
+	s.runAction(w, r, http.StatusOK, s.hypervisor.Stop)
 }
 
-func (s *Server) runAction(w http.ResponseWriter, r *http.Request, action func(context.Context, string) (hypervisor.ActionResult, error)) {
+func (s *Server) runAction(w http.ResponseWriter, r *http.Request, status int, action func(context.Context, string) (hypervisor.ActionResult, error)) {
 	identifier := r.PathValue("identifier")
 	result, err := action(r.Context(), identifier)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, status, result)
 }
 
 func parseDomainFilter(value string) (hypervisor.DomainFilter, bool) {
@@ -214,6 +219,8 @@ func (s *Server) writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "vm_not_found", "virtual machine not found")
 	case errors.Is(err, hypervisor.ErrConflict):
 		writeError(w, http.StatusConflict, "state_conflict", err.Error())
+	case errors.Is(err, hypervisor.ErrUnsupported):
+		writeError(w, http.StatusUnprocessableEntity, "operation_unsupported", err.Error())
 	default:
 		s.logger.Error("hypervisor request failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, "hypervisor_unavailable", "hypervisor request failed")

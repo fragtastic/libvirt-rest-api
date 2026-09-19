@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("domain not found")
-	ErrConflict = errors.New("domain state conflict")
+	ErrNotFound    = errors.New("domain not found")
+	ErrConflict    = errors.New("domain state conflict")
+	ErrUnsupported = errors.New("operation unsupported")
 )
 
 type DomainFilter uint32
@@ -55,9 +56,10 @@ type Viewer struct {
 }
 
 type ActionResult struct {
-	Name  string `json:"name"`
-	UUID  string `json:"uuid"`
-	State string `json:"state"`
+	Name   string `json:"name"`
+	UUID   string `json:"uuid"`
+	State  string `json:"state"`
+	Status string `json:"status,omitempty"`
 }
 
 type Screenshot struct {
@@ -73,6 +75,7 @@ type Service interface {
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)
 	Start(context.Context, string) (ActionResult, error)
+	Shutdown(context.Context, string) (ActionResult, error)
 	Stop(context.Context, string) (ActionResult, error)
 	Close() error
 }
