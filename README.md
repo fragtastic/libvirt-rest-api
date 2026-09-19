@@ -91,6 +91,7 @@ stable envelope:
 | `GET` | `/api/v1/vms/{identifier}/screenshot` | Current display in libvirt's native image format |
 | `POST` | `/api/v1/vms/{identifier}/actions/start` | Start an inactive domain |
 | `POST` | `/api/v1/vms/{identifier}/actions/shutdown` | Request a graceful guest shutdown |
+| `POST` | `/api/v1/vms/{identifier}/actions/reboot` | Request a graceful guest reboot |
 | `POST` | `/api/v1/vms/{identifier}/actions/stop` | Force an active domain off immediately |
 
 VM list and detail objects include a stable libvirt `uuid`. Their numeric `id`
@@ -105,6 +106,9 @@ state returns `409 Conflict`; a guest without graceful-shutdown support returns
 `422 Unprocessable Entity`. A missing domain returns `404 Not Found`;
 unavailable libvirt operations return 503 Service Unavailable without exposing
 internal connection details.
+
+Shutdown and reboot accept an optional JSON body with `mode` set to `default`,
+`acpi`, or `guest-agent`. An empty body uses libvirt's default mechanism.
 
 ## Extending the API
 

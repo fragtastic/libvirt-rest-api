@@ -14,6 +14,14 @@ var (
 
 type DomainFilter uint32
 
+type PowerMode string
+
+const (
+	PowerModeDefault    PowerMode = "default"
+	PowerModeACPI       PowerMode = "acpi"
+	PowerModeGuestAgent PowerMode = "guest-agent"
+)
+
 const (
 	DomainAll DomainFilter = iota
 	DomainActive
@@ -76,7 +84,8 @@ type Service interface {
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)
 	Start(context.Context, string) (ActionResult, error)
-	Shutdown(context.Context, string) (ActionResult, error)
+	Shutdown(context.Context, string, PowerMode) (ActionResult, error)
+	Reboot(context.Context, string, PowerMode) (ActionResult, error)
 	Stop(context.Context, string) (ActionResult, error)
 	Close() error
 }

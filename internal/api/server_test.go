@@ -47,9 +47,13 @@ func (f *fakeHypervisor) Start(_ context.Context, name string) (hypervisor.Actio
 	f.action, f.actionVM = "start", name
 	return hypervisor.ActionResult{Name: "database", UUID: "52d7a2fe-1942-4a89-93d9-9a57d8f67b6d", State: "running"}, f.err
 }
-func (f *fakeHypervisor) Shutdown(_ context.Context, name string) (hypervisor.ActionResult, error) {
+func (f *fakeHypervisor) Shutdown(_ context.Context, name string, _ hypervisor.PowerMode) (hypervisor.ActionResult, error) {
 	f.action, f.actionVM = "shutdown", name
 	return hypervisor.ActionResult{Name: "database", UUID: "52d7a2fe-1942-4a89-93d9-9a57d8f67b6d", State: "running", Status: "shutdown-requested"}, f.err
+}
+func (f *fakeHypervisor) Reboot(_ context.Context, name string, _ hypervisor.PowerMode) (hypervisor.ActionResult, error) {
+	f.action, f.actionVM = "reboot", name
+	return hypervisor.ActionResult{Name: "database", UUID: "52d7a2fe-1942-4a89-93d9-9a57d8f67b6d", State: "running", Status: "reboot-requested"}, f.err
 }
 func (f *fakeHypervisor) Stop(_ context.Context, name string) (hypervisor.ActionResult, error) {
 	f.action, f.actionVM = "stop", name
@@ -139,6 +143,13 @@ func TestActionsAndErrors(t *testing.T) {
 	if response.Code != http.StatusAccepted || fake.action != "shutdown" || fake.actionVM != uuid || !strings.Contains(response.Body.String(), `"state":"running"`) || !strings.Contains(response.Body.String(), `"status":"shutdown-requested"`) {
 		t.Fatalf("graceful shutdown: status = %d, action = %s %s, body = %s", response.Code, fake.action, fake.actionVM, response.Body.String())
 	}
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/vms/"+uuid+"/actions/reboot", strings.NewReader(`{"mode":"acpi"}`))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || fake.action != "reboot" || !strings.Contains(response.Body.String(), `"status":"reboot-requested"`) {
+		t.Fatalf("reboot: status = %d, body = %s", response.Code, response.Body.String())
+	}
 
 	fake.err = hypervisor.ErrNotFound
 	response = httptest.NewRecorder()
@@ -160,6 +171,14 @@ func TestUnsupportedGracefulShutdown(t *testing.T) {
 	response := httptest.NewRecorder()
 	New(fake, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/database/actions/shutdown", nil))
 	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "operation_unsupported") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRejectsInvalidPowerMode(t *testing.T) {
+	response := httptest.NewRecorder()
+	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/vms/web/actions/shutdown", strings.NewReader(`{"mode":"magic"}`)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_mode") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }

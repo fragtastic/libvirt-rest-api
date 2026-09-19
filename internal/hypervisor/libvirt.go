@@ -253,7 +253,7 @@ func (l *Libvirt) Start(_ context.Context, identifier string) (ActionResult, err
 	return ActionResult{Name: name, UUID: uuid, State: "running"}, nil
 }
 
-func (l *Libvirt) Shutdown(_ context.Context, identifier string) (ActionResult, error) {
+func (l *Libvirt) Shutdown(_ context.Context, identifier string, mode PowerMode) (ActionResult, error) {
 	domain, err := l.lookup(identifier)
 	if err != nil {
 		return ActionResult{}, err
@@ -265,7 +265,7 @@ func (l *Libvirt) Shutdown(_ context.Context, identifier string) (ActionResult, 
 	}
 	unlock := l.lockDomainAction(uuid)
 	defer unlock()
-	state, err := requestGracefulShutdown(name, domain)
+	state, err := requestGracefulShutdown(name, domain, shutdownFlags(mode))
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -275,10 +275,10 @@ func (l *Libvirt) Shutdown(_ context.Context, identifier string) (ActionResult, 
 type gracefulShutdownDomain interface {
 	IsActive() (bool, error)
 	GetState() (libvirt.DomainState, int, error)
-	Shutdown() error
+	ShutdownFlags(libvirt.DomainShutdownFlags) error
 }
 
-func requestGracefulShutdown(name string, domain gracefulShutdownDomain) (string, error) {
+func requestGracefulShutdown(name string, domain gracefulShutdownDomain, flags libvirt.DomainShutdownFlags) (string, error) {
 	active, err := domain.IsActive()
 	if err != nil {
 		return "", fmt.Errorf("get domain %q activity: %w", name, err)
@@ -290,7 +290,7 @@ func requestGracefulShutdown(name string, domain gracefulShutdownDomain) (string
 	if err != nil {
 		return "", fmt.Errorf("get domain %q state: %w", name, err)
 	}
-	if err := domain.Shutdown(); err != nil {
+	if err := domain.ShutdownFlags(flags); err != nil {
 		if active, stateErr := domain.IsActive(); stateErr == nil && !active {
 			return "", fmt.Errorf("%w: domain %q is already stopped", ErrConflict, name)
 		}
@@ -310,6 +310,63 @@ func requestGracefulShutdown(name string, domain gracefulShutdownDomain) (string
 		state = current
 	}
 	return StateName(int(state)), nil
+}
+
+func shutdownFlags(mode PowerMode) libvirt.DomainShutdownFlags {
+	switch mode {
+	case PowerModeACPI:
+		return libvirt.DOMAIN_SHUTDOWN_ACPI_POWER_BTN
+	case PowerModeGuestAgent:
+		return libvirt.DOMAIN_SHUTDOWN_GUEST_AGENT
+	default:
+		return libvirt.DOMAIN_SHUTDOWN_DEFAULT
+	}
+}
+
+func rebootFlags(mode PowerMode) libvirt.DomainRebootFlagValues {
+	switch mode {
+	case PowerModeACPI:
+		return libvirt.DOMAIN_REBOOT_ACPI_POWER_BTN
+	case PowerModeGuestAgent:
+		return libvirt.DOMAIN_REBOOT_GUEST_AGENT
+	default:
+		return libvirt.DOMAIN_REBOOT_DEFAULT
+	}
+}
+
+func (l *Libvirt) Reboot(_ context.Context, identifier string, mode PowerMode) (ActionResult, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	unlock := l.lockDomainAction(uuid)
+	defer unlock()
+	active, err := domain.IsActive()
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("get domain %q activity: %w", name, err)
+	}
+	if !active {
+		return ActionResult{}, fmt.Errorf("%w: domain %q is stopped", ErrConflict, name)
+	}
+	state, _, err := domain.GetState()
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("get domain %q state: %w", name, err)
+	}
+	if err := domain.Reboot(rebootFlags(mode)); err != nil {
+		if errors.Is(err, libvirt.ERR_OPERATION_INVALID) {
+			return ActionResult{}, fmt.Errorf("%w: domain %q cannot reboot in its current state", ErrConflict, name)
+		}
+		if errors.Is(err, libvirt.ERR_NO_SUPPORT) || errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED) {
+			return ActionResult{}, fmt.Errorf("%w: domain %q does not support requested reboot mode", ErrUnsupported, name)
+		}
+		return ActionResult{}, fmt.Errorf("request reboot for domain %q: %w", name, err)
+	}
+	return ActionResult{Name: name, UUID: uuid, State: StateName(int(state)), Status: "reboot-requested"}, nil
 }
 
 func (l *Libvirt) Stop(_ context.Context, identifier string) (ActionResult, error) {

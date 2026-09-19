@@ -25,7 +25,7 @@ func (f *fakeGracefulShutdownDomain) GetState() (libvirt.DomainState, int, error
 	return f.state, 0, nil
 }
 
-func (f *fakeGracefulShutdownDomain) Shutdown() error {
+func (f *fakeGracefulShutdownDomain) ShutdownFlags(libvirt.DomainShutdownFlags) error {
 	f.shutdownCalls++
 	if f.deactivateOnRequest {
 		f.active = false
@@ -185,7 +185,7 @@ func TestDomainActionLockSerializesSameUUID(t *testing.T) {
 func TestRequestGracefulShutdown(t *testing.T) {
 	t.Run("accepted", func(t *testing.T) {
 		domain := &fakeGracefulShutdownDomain{active: true, state: libvirt.DOMAIN_RUNNING}
-		state, err := requestGracefulShutdown("web", domain)
+		state, err := requestGracefulShutdown("web", domain, libvirt.DOMAIN_SHUTDOWN_DEFAULT)
 		if err != nil || state != "running" || domain.shutdownCalls != 1 {
 			t.Fatalf("state = %q, error = %v, shutdown calls = %d", state, err, domain.shutdownCalls)
 		}
@@ -193,7 +193,7 @@ func TestRequestGracefulShutdown(t *testing.T) {
 
 	t.Run("inactive conflicts without requesting shutdown", func(t *testing.T) {
 		domain := &fakeGracefulShutdownDomain{state: libvirt.DOMAIN_SHUTOFF}
-		_, err := requestGracefulShutdown("web", domain)
+		_, err := requestGracefulShutdown("web", domain, libvirt.DOMAIN_SHUTDOWN_DEFAULT)
 		if !errors.Is(err, ErrConflict) || domain.shutdownCalls != 0 {
 			t.Fatalf("error = %v, shutdown calls = %d", err, domain.shutdownCalls)
 		}
@@ -201,7 +201,7 @@ func TestRequestGracefulShutdown(t *testing.T) {
 
 	t.Run("invalid state conflicts", func(t *testing.T) {
 		domain := &fakeGracefulShutdownDomain{active: true, state: libvirt.DOMAIN_RUNNING, shutdownErr: libvirt.Error{Code: libvirt.ERR_OPERATION_INVALID}}
-		_, err := requestGracefulShutdown("web", domain)
+		_, err := requestGracefulShutdown("web", domain, libvirt.DOMAIN_SHUTDOWN_DEFAULT)
 		if !errors.Is(err, ErrConflict) || domain.shutdownCalls != 1 {
 			t.Fatalf("error = %v, shutdown calls = %d", err, domain.shutdownCalls)
 		}
@@ -209,7 +209,7 @@ func TestRequestGracefulShutdown(t *testing.T) {
 
 	t.Run("unsupported operation is typed", func(t *testing.T) {
 		domain := &fakeGracefulShutdownDomain{active: true, state: libvirt.DOMAIN_RUNNING, shutdownErr: libvirt.Error{Code: libvirt.ERR_OPERATION_UNSUPPORTED}}
-		_, err := requestGracefulShutdown("web", domain)
+		_, err := requestGracefulShutdown("web", domain, libvirt.DOMAIN_SHUTDOWN_DEFAULT)
 		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("error = %v, want ErrUnsupported", err)
 		}
@@ -217,7 +217,7 @@ func TestRequestGracefulShutdown(t *testing.T) {
 
 	t.Run("external stop wins race", func(t *testing.T) {
 		domain := &fakeGracefulShutdownDomain{active: true, state: libvirt.DOMAIN_RUNNING, shutdownErr: fmt.Errorf("operation failed"), deactivateOnRequest: true}
-		_, err := requestGracefulShutdown("web", domain)
+		_, err := requestGracefulShutdown("web", domain, libvirt.DOMAIN_SHUTDOWN_DEFAULT)
 		if !errors.Is(err, ErrConflict) {
 			t.Fatalf("error = %v, want ErrConflict", err)
 		}

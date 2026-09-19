@@ -74,6 +74,7 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/start", scopeControl, s.vmStart)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/shutdown", scopeControl, s.vmShutdown)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/reboot", scopeControl, s.vmReboot)
 	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/stop", scopeAdmin, s.vmStop)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
@@ -215,11 +216,58 @@ func (s *Server) vmStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) vmShutdown(w http.ResponseWriter, r *http.Request) {
-	s.runAction(w, r, http.StatusAccepted, s.hypervisor.Shutdown)
+	mode, ok := decodePowerMode(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.hypervisor.Shutdown(r.Context(), r.PathValue("identifier"), mode)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) vmReboot(w http.ResponseWriter, r *http.Request) {
+	mode, ok := decodePowerMode(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.hypervisor.Reboot(r.Context(), r.PathValue("identifier"), mode)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 func (s *Server) vmStop(w http.ResponseWriter, r *http.Request) {
 	s.runAction(w, r, http.StatusOK, s.hypervisor.Stop)
+}
+
+func decodePowerMode(w http.ResponseWriter, r *http.Request) (hypervisor.PowerMode, bool) {
+	if r.ContentLength == 0 {
+		return hypervisor.PowerModeDefault, true
+	}
+	var request struct {
+		Mode hypervisor.PowerMode `json:"mode"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be a JSON object containing mode")
+		return "", false
+	}
+	if request.Mode == "" {
+		request.Mode = hypervisor.PowerModeDefault
+	}
+	switch request.Mode {
+	case hypervisor.PowerModeDefault, hypervisor.PowerModeACPI, hypervisor.PowerModeGuestAgent:
+		return request.Mode, true
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_mode", "mode must be default, acpi, or guest-agent")
+		return "", false
+	}
 }
 
 func (s *Server) runAction(w http.ResponseWriter, r *http.Request, status int, action func(context.Context, string) (hypervisor.ActionResult, error)) {
