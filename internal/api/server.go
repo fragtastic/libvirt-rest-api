@@ -598,13 +598,13 @@ func (s *Server) requireScope(required scope, next http.Handler) http.HandlerFun
 		authorization := r.Header.Get("Authorization")
 		scheme, provided, found := strings.Cut(authorization, " ")
 		if !found || !strings.EqualFold(scheme, "Bearer") || provided == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="virt-rest-api"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="libvirt-rest-api"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
 			return
 		}
 		providedScope, valid := s.scopeForToken(provided)
 		if !valid {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="virt-rest-api"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="libvirt-rest-api"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
 			return
 		}

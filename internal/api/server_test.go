@@ -355,8 +355,22 @@ func TestAuthentication(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status without token = %d", response.Code)
 	}
+	if challenge := response.Header().Get("WWW-Authenticate"); challenge != `Bearer realm="libvirt-rest-api"` {
+		t.Fatalf("WWW-Authenticate without token = %q", challenge)
+	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/host", nil)
+	request.Header.Set("Authorization", "Bearer invalid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status with invalid token = %d", response.Code)
+	}
+	if challenge := response.Header().Get("WWW-Authenticate"); challenge != `Bearer realm="libvirt-rest-api"` {
+		t.Fatalf("WWW-Authenticate with invalid token = %q", challenge)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/host", nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

@@ -31,14 +31,14 @@ jobs:
           GOARCH: amd64
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -tags libvirt_dlopen -o dist/virt-rest-api ./cmd/virt-rest-api
+          go build -trimpath -ldflags="-s -w" -tags libvirt_dlopen -o dist/libvirt-rest-api ./cmd/libvirt-rest-api
 
       - name: Package release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          archive="virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz"
-          tar -C dist -czf "dist/$archive" virt-rest-api
+          archive="libvirt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz"
+          tar -C dist -czf "dist/$archive" libvirt-rest-api
           cd dist
           sha256sum "$archive" > "${archive}.sha256"
 
@@ -48,6 +48,6 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           gh release create "$RELEASE_TAG" \
-            "dist/virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz" \
-            "dist/virt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz.sha256" \
+            "dist/libvirt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz" \
+            "dist/libvirt-rest-api_${RELEASE_TAG}_linux_amd64.tar.gz.sha256" \
             --generate-notes

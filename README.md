@@ -1,4 +1,4 @@
-# virt-rest-api
+# libvirt-rest-api
 
 A small, versioned REST API for managing libvirt virtual machines. The service
 is written in modern Go, uses the standard library for HTTP, configuration,
@@ -15,8 +15,8 @@ The normal build uses libvirt development headers. The `libvirt_dlopen` build
 tag avoids that build-time requirement and loads `libvirt.so` at runtime:
 
 ```sh
-go build -tags libvirt_dlopen ./cmd/virt-rest-api
-API_BEARER_TOKEN='replace-with-a-long-random-token' ./virt-rest-api
+go build -tags libvirt_dlopen ./cmd/libvirt-rest-api
+API_BEARER_TOKEN='replace-with-a-long-random-token' ./libvirt-rest-api
 ```
 
 Run the tests without a live hypervisor:
@@ -60,7 +60,7 @@ Example:
 LIBVIRT_URI=qemu:///system \
 API_BEARER_TOKEN='replace-with-a-long-random-token' \
 LISTEN_ADDR=127.0.0.1:8080 \
-./virt-rest-api
+./libvirt-rest-api
 ```
 
 Requests with authentication use:
