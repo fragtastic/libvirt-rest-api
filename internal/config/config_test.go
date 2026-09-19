@@ -9,13 +9,14 @@ import (
 
 func clearEnvironment(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"LIBVIRT_URI", "QEMU_URI", "LISTEN_ADDR", "API_BEARER_TOKEN", "CORS_ORIGINS", "ALLOW_INSECURE_LISTEN"} {
+	for _, key := range []string{"LIBVIRT_URI", "QEMU_URI", "LISTEN_ADDR", "API_BEARER_TOKEN", "CORS_ORIGINS", "ALLOW_INSECURE_LISTEN", "ALLOW_INSECURE_LOOPBACK_LISTEN"} {
 		t.Setenv(key, "")
 	}
 }
 
 func TestLoadDefaults(t *testing.T) {
 	clearEnvironment(t)
+	t.Setenv("API_BEARER_TOKEN", "test-token")
 
 	cfg, err := Load()
 	if err != nil {
@@ -24,7 +25,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LibvirtURI != "qemu:///system" || cfg.ListenAddr != "127.0.0.1:8080" {
 		t.Fatalf("Load() endpoint config = %#v", cfg)
 	}
-	if cfg.APIToken != "" || cfg.CORSOrigins != nil {
+	if cfg.APIToken != "test-token" || cfg.CORSOrigins != nil {
 		t.Fatalf("Load() security defaults = %#v", cfg)
 	}
 	wantTimeouts := HTTPTimeouts{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
@@ -57,6 +58,7 @@ func TestLoadConfigured(t *testing.T) {
 func TestLoadUsesLegacyQEMUURI(t *testing.T) {
 	clearEnvironment(t)
 	t.Setenv("QEMU_URI", "qemu+tcp://hypervisor/system")
+	t.Setenv("API_BEARER_TOKEN", "test-token")
 
 	cfg, err := Load()
 	if err != nil {
@@ -73,8 +75,11 @@ func TestLoadRejectsUnsafeOrInvalidConfiguration(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"public without token", map[string]string{"LISTEN_ADDR": "0.0.0.0:8080"}, "not loopback"},
+		{"loopback without token", nil, "API_BEARER_TOKEN is required"},
+		{"public without token", map[string]string{"LISTEN_ADDR": "0.0.0.0:8080"}, "required for non-loopback"},
+		{"loopback override on public", map[string]string{"LISTEN_ADDR": "0.0.0.0:8080", "ALLOW_INSECURE_LOOPBACK_LISTEN": "true"}, "does not permit external"},
 		{"public opt-in invalid", map[string]string{"LISTEN_ADDR": "0.0.0.0:8080", "ALLOW_INSECURE_LISTEN": "sometimes"}, "must be a boolean"},
+		{"loopback opt-in invalid", map[string]string{"ALLOW_INSECURE_LOOPBACK_LISTEN": "sometimes"}, "must be a boolean"},
 		{"malformed listen address", map[string]string{"LISTEN_ADDR": "127.0.0.1"}, "host:port"},
 		{"bad port", map[string]string{"LISTEN_ADDR": "127.0.0.1:70000"}, "invalid port"},
 		{"token whitespace", map[string]string{"API_BEARER_TOKEN": "two words"}, "must not contain whitespace"},
@@ -98,11 +103,40 @@ func TestLoadRejectsUnsafeOrInvalidConfiguration(t *testing.T) {
 }
 
 func TestLoadAllowsExplicitInsecureListen(t *testing.T) {
-	clearEnvironment(t)
-	t.Setenv("LISTEN_ADDR", "[::]:8080")
-	t.Setenv("ALLOW_INSECURE_LISTEN", "true")
+	for _, address := range []string{"127.0.0.1:8080", "[::]:8080"} {
+		t.Run(address, func(t *testing.T) {
+			clearEnvironment(t)
+			t.Setenv("LISTEN_ADDR", address)
+			t.Setenv("ALLOW_INSECURE_LISTEN", "true")
 
-	if _, err := Load(); err != nil {
-		t.Fatalf("Load() error = %v", err)
+			if _, err := Load(); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadAllowsExplicitInsecureLoopbackListen(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:8080", "[::1]:8080"} {
+		t.Run(address, func(t *testing.T) {
+			clearEnvironment(t)
+			t.Setenv("LISTEN_ADDR", address)
+			t.Setenv("ALLOW_INSECURE_LOOPBACK_LISTEN", "true")
+
+			if _, err := Load(); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsHostnameForInsecureLoopbackOverride(t *testing.T) {
+	clearEnvironment(t)
+	t.Setenv("LISTEN_ADDR", "localhost:8080")
+	t.Setenv("ALLOW_INSECURE_LOOPBACK_LISTEN", "true")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "does not permit external") {
+		t.Fatalf("Load() error = %v, want hostname rejection", err)
 	}
 }

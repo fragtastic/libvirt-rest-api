@@ -16,7 +16,7 @@ tag avoids that build-time requirement and loads `libvirt.so` at runtime:
 
 ```sh
 go build -tags libvirt_dlopen ./cmd/virt-rest-api
-./virt-rest-api
+API_BEARER_TOKEN='replace-with-a-long-random-token' ./virt-rest-api
 ```
 
 Run the tests without a live hypervisor:
@@ -34,14 +34,16 @@ Configuration is read from environment variables.
 | `LIBVIRT_URI` | `qemu:///system` | libvirt connection URI |
 | `QEMU_URI` | unset | Compatibility fallback when `LIBVIRT_URI` is unset |
 | `LISTEN_ADDR` | `127.0.0.1:8080` | HTTP listen address |
-| `API_BEARER_TOKEN` | unset | Bearer token required on API routes |
+| `API_BEARER_TOKEN` | unset | Bearer token required on API routes; startup fails when unset unless an insecure override applies |
 | `CORS_ORIGINS` | unset | Comma-separated exact HTTP(S) origins; unset rejects browser cross-origin requests |
-| `ALLOW_INSECURE_LISTEN` | `false` | Explicitly allow a non-loopback listener without authentication |
+| `ALLOW_INSECURE_LOOPBACK_LISTEN` | `false` | Explicitly allow authentication-free access only when `LISTEN_ADDR` is loopback |
+| `ALLOW_INSECURE_LISTEN` | `false` | Explicitly allow authentication-free access on either loopback or external listeners |
 
-The default is intentionally local-only. For remote access, set a strong
-`API_BEARER_TOKEN` and terminate TLS in front of this service. A non-loopback
-listener without a token is rejected unless `ALLOW_INSECURE_LISTEN=true` is
-explicitly set.
+Authentication is required by default, including on loopback. For remote
+access, set a strong `API_BEARER_TOKEN` and terminate TLS in front of this
+service. `ALLOW_INSECURE_LOOPBACK_LISTEN=true` waives authentication only for a
+loopback listener. `ALLOW_INSECURE_LISTEN=true` is the broader escape hatch and
+waives authentication for any listen address.
 
 Example:
 

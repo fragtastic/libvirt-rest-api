@@ -26,8 +26,8 @@ type HTTPTimeouts struct {
 	Idle       time.Duration
 }
 
-// Config is the complete process configuration. An empty APIToken means that
-// authentication middleware should not require a bearer token.
+// Config is the complete process configuration. An empty APIToken is accepted
+// only when an explicit insecure-listen override is enabled.
 type Config struct {
 	LibvirtURI  string
 	ListenAddr  string
@@ -74,16 +74,24 @@ func Load() (Config, error) {
 	if err := validateListenAddr(cfg.ListenAddr); err != nil {
 		return Config{}, err
 	}
-	allowed, err := boolEnv("ALLOW_INSECURE_LISTEN")
+	allowInsecure, err := boolEnv("ALLOW_INSECURE_LISTEN")
 	if err != nil {
 		return Config{}, err
 	}
-	if !isLoopbackListenAddr(cfg.ListenAddr) && cfg.APIToken == "" {
-		if !allowed {
-			return Config{}, fmt.Errorf("LISTEN_ADDR %q is not loopback; set API_BEARER_TOKEN or explicitly set ALLOW_INSECURE_LISTEN=true", cfg.ListenAddr)
-		}
+	allowInsecureLoopback, err := boolEnv("ALLOW_INSECURE_LOOPBACK_LISTEN")
+	if err != nil {
+		return Config{}, err
 	}
-	return cfg, nil
+	if cfg.APIToken != "" || allowInsecure {
+		return cfg, nil
+	}
+	if isLoopbackListenAddr(cfg.ListenAddr) {
+		if allowInsecureLoopback {
+			return cfg, nil
+		}
+		return Config{}, fmt.Errorf("API_BEARER_TOKEN is required; for an unauthenticated loopback listener explicitly set ALLOW_INSECURE_LOOPBACK_LISTEN=true or ALLOW_INSECURE_LISTEN=true")
+	}
+	return Config{}, fmt.Errorf("API_BEARER_TOKEN is required for non-loopback LISTEN_ADDR %q; ALLOW_INSECURE_LOOPBACK_LISTEN does not permit external listeners, so explicitly set ALLOW_INSECURE_LISTEN=true to disable authentication", cfg.ListenAddr)
 }
 
 func valueOrDefault(key, fallback string) string {
@@ -116,9 +124,6 @@ func isLoopbackListenAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
