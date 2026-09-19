@@ -177,6 +177,35 @@ func TestAuthentication(t *testing.T) {
 	}
 }
 
+func TestAuthorizationScopes(t *testing.T) {
+	handler := New(&fakeHypervisor{}, Options{ReadToken: "read", ControlToken: "control", AdminToken: "admin"})
+	tests := []struct {
+		name   string
+		token  string
+		method string
+		path   string
+		status int
+	}{
+		{"read can read", "read", http.MethodGet, "/api/v1/host", http.StatusOK},
+		{"read cannot control", "read", http.MethodPost, "/api/v1/vms/web/actions/start", http.StatusForbidden},
+		{"control can read", "control", http.MethodGet, "/api/v1/host", http.StatusOK},
+		{"control can start", "control", http.MethodPost, "/api/v1/vms/web/actions/start", http.StatusOK},
+		{"control cannot force stop", "control", http.MethodPost, "/api/v1/vms/web/actions/stop", http.StatusForbidden},
+		{"admin can force stop", "admin", http.MethodPost, "/api/v1/vms/web/actions/stop", http.StatusOK},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d, body = %s", response.Code, test.status, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRoutingErrorsUseJSON(t *testing.T) {
 	handler := New(&fakeHypervisor{}, Options{})
 	tests := []struct {

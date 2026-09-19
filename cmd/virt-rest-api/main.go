@@ -35,7 +35,9 @@ func run(logger *slog.Logger) error {
 	defer service.Close()
 
 	handler := api.New(service, api.Options{
-		Logger: logger, BearerToken: cfg.APIToken, AllowedOrigins: cfg.CORSOrigins,
+		Logger: logger, BearerToken: cfg.APIToken, ReadToken: cfg.ReadToken,
+		ControlToken: cfg.ControlToken, AdminToken: cfg.AdminToken,
+		AllowedOrigins: cfg.CORSOrigins,
 	})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,

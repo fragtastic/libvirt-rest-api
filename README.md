@@ -35,6 +35,9 @@ Configuration is read from environment variables.
 | `QEMU_URI` | unset | Compatibility fallback when `LIBVIRT_URI` is unset |
 | `LISTEN_ADDR` | `127.0.0.1:8080` | HTTP listen address |
 | `API_BEARER_TOKEN` | unset | Bearer token required on API routes; startup fails when unset unless an insecure override applies |
+| `API_READ_TOKEN` | unset | Optional token for read-only API access |
+| `API_CONTROL_TOKEN` | unset | Optional token for read and ordinary VM lifecycle controls |
+| `API_ADMIN_TOKEN` | unset | Optional token for all operations, including destructive administration |
 | `CORS_ORIGINS` | unset | Comma-separated exact HTTP(S) origins; unset rejects browser cross-origin requests |
 | `ALLOW_INSECURE_LOOPBACK_LISTEN` | `false` | Explicitly allow authentication-free access only when `LISTEN_ADDR` is loopback |
 | `ALLOW_INSECURE_LISTEN` | `false` | Explicitly allow authentication-free access on either loopback or external listeners |
@@ -44,6 +47,12 @@ access, set a strong `API_BEARER_TOKEN` and terminate TLS in front of this
 service. `ALLOW_INSECURE_LOOPBACK_LISTEN=true` waives authentication only for a
 loopback listener. `ALLOW_INSECURE_LISTEN=true` is the broader escape hatch and
 waives authentication for any listen address.
+
+`API_BEARER_TOKEN` remains a backwards-compatible administrator credential.
+Scoped credentials are hierarchical: admin includes control and read, while
+control includes read. Configuring the same value for multiple token variables
+is rejected. The insecure-listen overrides grant unauthenticated administrator
+access and should be used only in deliberately isolated environments.
 
 Example:
 

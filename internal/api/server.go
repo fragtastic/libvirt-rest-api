@@ -22,13 +22,28 @@ const maxRequestBody = 1 << 20
 type Options struct {
 	Logger         *slog.Logger
 	BearerToken    string
+	ReadToken      string
+	ControlToken   string
+	AdminToken     string
 	AllowedOrigins []string
 }
+
+type scope uint8
+
+const (
+	scopePublic scope = iota
+	scopeRead
+	scopeControl
+	scopeAdmin
+)
 
 type Server struct {
 	hypervisor     hypervisor.Service
 	logger         *slog.Logger
 	bearerToken    string
+	readToken      string
+	controlToken   string
+	adminToken     string
 	allowedOrigins []string
 }
 
@@ -41,26 +56,33 @@ func New(service hypervisor.Service, options Options) http.Handler {
 		hypervisor:     service,
 		logger:         logger,
 		bearerToken:    options.BearerToken,
+		readToken:      options.ReadToken,
+		controlToken:   options.ControlToken,
+		adminToken:     options.AdminToken,
 		allowedOrigins: append([]string(nil), options.AllowedOrigins...),
 	}
 
 	mux := http.NewServeMux()
 	routes := newRouteRegistry(mux)
-	routes.handle(http.MethodGet, "/healthz", s.health)
-	routes.handle(http.MethodGet, "/api/v1/host", s.host)
-	routes.handle(http.MethodGet, "/api/v1/vms", s.listVMs)
-	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}", s.vm)
-	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}/xml", s.vmXML)
-	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}/viewer", s.vmViewer)
-	routes.handle(http.MethodGet, "/api/v1/vms/{identifier}/screenshot", s.vmScreenshot)
-	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/start", s.vmStart)
-	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/shutdown", s.vmShutdown)
-	routes.handle(http.MethodPost, "/api/v1/vms/{identifier}/actions/stop", s.vmStop)
+	s.handle(routes, http.MethodGet, "/healthz", scopePublic, s.health)
+	s.handle(routes, http.MethodGet, "/api/v1/host", scopeRead, s.host)
+	s.handle(routes, http.MethodGet, "/api/v1/vms", scopeRead, s.listVMs)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/xml", scopeRead, s.vmXML)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/viewer", scopeRead, s.vmViewer)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/start", scopeControl, s.vmStart)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/shutdown", scopeControl, s.vmShutdown)
+	s.handle(routes, http.MethodPost, "/api/v1/vms/{identifier}/actions/stop", scopeAdmin, s.vmStop)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	})
 
-	return s.recoverPanic(s.accessLog(s.securityHeaders(s.cors(s.authenticate(mux)))))
+	return s.recoverPanic(s.accessLog(s.securityHeaders(s.cors(mux))))
+}
+
+func (s *Server) handle(routes *routeRegistry, method, path string, required scope, handler http.HandlerFunc) {
+	routes.handle(method, path, s.requireScope(required, handler))
 }
 
 type routeRegistry struct {
@@ -227,9 +249,9 @@ func (s *Server) writeServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Server) authenticate(next http.Handler) http.Handler {
+func (s *Server) requireScope(required scope, next http.Handler) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || s.bearerToken == "" {
+		if required == scopePublic || !s.hasCredentials() {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -240,13 +262,40 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.bearerToken)) != 1 {
+		providedScope, valid := s.scopeForToken(provided)
+		if !valid {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="virt-rest-api"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
 			return
 		}
+		if providedScope < required {
+			writeError(w, http.StatusForbidden, "insufficient_scope", "the bearer token does not grant the required scope")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) hasCredentials() bool {
+	return s.bearerToken != "" || s.readToken != "" || s.controlToken != "" || s.adminToken != ""
+}
+
+func (s *Server) scopeForToken(token string) (scope, bool) {
+	candidates := []struct {
+		token string
+		scope scope
+	}{
+		{s.readToken, scopeRead},
+		{s.controlToken, scopeControl},
+		{s.bearerToken, scopeAdmin},
+		{s.adminToken, scopeAdmin},
+	}
+	for _, candidate := range candidates {
+		if candidate.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(candidate.token)) == 1 {
+			return candidate.scope, true
+		}
+	}
+	return scopePublic, false
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

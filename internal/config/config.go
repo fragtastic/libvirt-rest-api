@@ -29,11 +29,14 @@ type HTTPTimeouts struct {
 // Config is the complete process configuration. An empty APIToken is accepted
 // only when an explicit insecure-listen override is enabled.
 type Config struct {
-	LibvirtURI  string
-	ListenAddr  string
-	APIToken    string
-	CORSOrigins []string
-	Timeouts    HTTPTimeouts
+	LibvirtURI   string
+	ListenAddr   string
+	APIToken     string
+	ReadToken    string
+	ControlToken string
+	AdminToken   string
+	CORSOrigins  []string
+	Timeouts     HTTPTimeouts
 }
 
 // Load reads configuration from the environment.
@@ -53,9 +56,12 @@ func Load() (Config, error) {
 
 	token := os.Getenv("API_BEARER_TOKEN")
 	cfg := Config{
-		LibvirtURI: libvirtURI,
-		ListenAddr: valueOrDefault("LISTEN_ADDR", defaultListenAddr),
-		APIToken:   token,
+		LibvirtURI:   libvirtURI,
+		ListenAddr:   valueOrDefault("LISTEN_ADDR", defaultListenAddr),
+		APIToken:     token,
+		ReadToken:    os.Getenv("API_READ_TOKEN"),
+		ControlToken: os.Getenv("API_CONTROL_TOKEN"),
+		AdminToken:   os.Getenv("API_ADMIN_TOKEN"),
 		Timeouts: HTTPTimeouts{
 			ReadHeader: 5 * time.Second,
 			Read:       15 * time.Second,
@@ -68,7 +74,7 @@ func Load() (Config, error) {
 	if cfg.CORSOrigins, err = parseOrigins(os.Getenv("CORS_ORIGINS")); err != nil {
 		return Config{}, err
 	}
-	if err := validateToken(cfg.APIToken); err != nil {
+	if err := validateTokens(cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateListenAddr(cfg.ListenAddr); err != nil {
@@ -82,7 +88,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if cfg.APIToken != "" || allowInsecure {
+	if cfg.hasCredentials() || allowInsecure {
 		return cfg, nil
 	}
 	if isLoopbackListenAddr(cfg.ListenAddr) {
@@ -94,6 +100,10 @@ func Load() (Config, error) {
 	return Config{}, fmt.Errorf("API_BEARER_TOKEN is required for non-loopback LISTEN_ADDR %q; ALLOW_INSECURE_LOOPBACK_LISTEN does not permit external listeners, so explicitly set ALLOW_INSECURE_LISTEN=true to disable authentication", cfg.ListenAddr)
 }
 
+func (c Config) hasCredentials() bool {
+	return c.APIToken != "" || c.ReadToken != "" || c.ControlToken != "" || c.AdminToken != ""
+}
+
 func valueOrDefault(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
@@ -101,9 +111,25 @@ func valueOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func validateToken(token string) error {
-	if strings.IndexFunc(token, unicode.IsSpace) >= 0 {
-		return fmt.Errorf("API_BEARER_TOKEN must not contain whitespace")
+func validateTokens(cfg Config) error {
+	tokens := map[string]string{
+		"API_BEARER_TOKEN":  cfg.APIToken,
+		"API_READ_TOKEN":    cfg.ReadToken,
+		"API_CONTROL_TOKEN": cfg.ControlToken,
+		"API_ADMIN_TOKEN":   cfg.AdminToken,
+	}
+	seen := make(map[string]string)
+	for name, token := range tokens {
+		if strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+			return fmt.Errorf("%s must not contain whitespace", name)
+		}
+		if token == "" {
+			continue
+		}
+		if previous, exists := seen[token]; exists {
+			return fmt.Errorf("%s and %s must not use the same token", previous, name)
+		}
+		seen[token] = name
 	}
 	return nil
 }

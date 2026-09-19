@@ -9,7 +9,7 @@ import (
 
 func clearEnvironment(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"LIBVIRT_URI", "QEMU_URI", "LISTEN_ADDR", "API_BEARER_TOKEN", "CORS_ORIGINS", "ALLOW_INSECURE_LISTEN", "ALLOW_INSECURE_LOOPBACK_LISTEN"} {
+	for _, key := range []string{"LIBVIRT_URI", "QEMU_URI", "LISTEN_ADDR", "API_BEARER_TOKEN", "API_READ_TOKEN", "API_CONTROL_TOKEN", "API_ADMIN_TOKEN", "CORS_ORIGINS", "ALLOW_INSECURE_LISTEN", "ALLOW_INSECURE_LOOPBACK_LISTEN"} {
 		t.Setenv(key, "")
 	}
 }
@@ -83,6 +83,8 @@ func TestLoadRejectsUnsafeOrInvalidConfiguration(t *testing.T) {
 		{"malformed listen address", map[string]string{"LISTEN_ADDR": "127.0.0.1"}, "host:port"},
 		{"bad port", map[string]string{"LISTEN_ADDR": "127.0.0.1:70000"}, "invalid port"},
 		{"token whitespace", map[string]string{"API_BEARER_TOKEN": "two words"}, "must not contain whitespace"},
+		{"scoped token whitespace", map[string]string{"API_READ_TOKEN": "two words"}, "API_READ_TOKEN must not contain whitespace"},
+		{"duplicate tokens", map[string]string{"API_READ_TOKEN": "same", "API_ADMIN_TOKEN": "same"}, "must not use the same token"},
 		{"token surrounding whitespace", map[string]string{"API_BEARER_TOKEN": " token"}, "must not contain whitespace"},
 		{"invalid opt-in on loopback", map[string]string{"ALLOW_INSECURE_LISTEN": "sometimes"}, "must be a boolean"},
 		{"empty cors item", map[string]string{"CORS_ORIGINS": "https://one.example,,https://two.example"}, "empty origin"},
