@@ -39,6 +39,9 @@ func (f *fakeHypervisor) Domain(context.Context, string) (hypervisor.DomainInfo,
 func (f *fakeHypervisor) DomainStats(context.Context, string) (hypervisor.DomainStats, error) {
 	return hypervisor.DomainStats{Name: "web", MemoryKiB: map[string]uint64{}, Disks: []hypervisor.BlockStats{}, Interfaces: []hypervisor.NetworkStats{}}, f.err
 }
+func (f *fakeHypervisor) DomainInterfaces(_ context.Context, _ string, source hypervisor.InterfaceAddressSource) (hypervisor.DomainInterfaces, error) {
+	return hypervisor.DomainInterfaces{Name: "web", Source: source, Interfaces: []hypervisor.DomainInterface{}}, f.err
+}
 func (f *fakeHypervisor) DomainXML(context.Context, string) (string, error) {
 	return "<domain><name>test</name></domain>", f.err
 }
@@ -129,6 +132,7 @@ func TestVMRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/vms/web", "application/json", `"uuid":"52d7a2fe-1942-4a89-93d9-9a57d8f67b6d"`},
 		{http.MethodGet, "/api/v1/host/stats", "application/json", `"total":1024`},
 		{http.MethodGet, "/api/v1/vms/web/stats", "application/json", `"name":"web"`},
+		{http.MethodGet, "/api/v1/vms/web/interfaces?source=agent", "application/json", `"source":"agent"`},
 		{http.MethodGet, "/api/v1/vms/web/xml", "application/xml", "<domain>"},
 		{http.MethodGet, "/api/v1/vms/web/viewer", "application/json", `"port":5900`},
 		{http.MethodGet, "/api/v1/vms/web/screenshot", "image/png", "png"},
@@ -141,6 +145,14 @@ func TestVMRoutes(t *testing.T) {
 				t.Fatalf("status = %d, type = %q, body = %s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
 			}
 		})
+	}
+}
+
+func TestRejectsInvalidInterfaceSource(t *testing.T) {
+	response := httptest.NewRecorder()
+	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/vms/web/interfaces?source=magic", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

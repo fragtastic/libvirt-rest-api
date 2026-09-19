@@ -88,6 +88,7 @@ stable envelope:
 | `GET` | `/api/v1/vms?state=all` | List domains; state may be `all`, `active`, or `inactive` |
 | `GET` | `/api/v1/vms/{identifier}` | Domain state and resource information |
 | `GET` | `/api/v1/vms/{identifier}/stats` | Timestamped cumulative CPU, memory, disk, and network counters |
+| `GET` | `/api/v1/vms/{identifier}/interfaces?source=lease` | Interface addresses from `lease`, `agent`, or `arp` |
 | `GET` | `/api/v1/vms/{identifier}/xml` | Raw libvirt domain XML as `application/xml` |
 | `GET` | `/api/v1/vms/{identifier}/viewer` | First configured graphics listener |
 | `GET` | `/api/v1/vms/{identifier}/screenshot` | Current display in libvirt's native image format |

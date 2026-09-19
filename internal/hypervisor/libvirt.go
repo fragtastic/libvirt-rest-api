@@ -220,6 +220,49 @@ func (l *Libvirt) DomainStats(_ context.Context, identifier string) (DomainStats
 	return result, nil
 }
 
+func (l *Libvirt) DomainInterfaces(_ context.Context, identifier string, source InterfaceAddressSource) (DomainInterfaces, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return DomainInterfaces{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return DomainInterfaces{}, err
+	}
+	var libvirtSource libvirt.DomainInterfaceAddressesSource
+	switch source {
+	case InterfaceSourceAgent:
+		libvirtSource = libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT
+	case InterfaceSourceARP:
+		libvirtSource = libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_ARP
+	default:
+		libvirtSource = libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE
+	}
+	items, err := domain.ListAllInterfaceAddresses(libvirtSource)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_SUPPORT) || errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED) {
+			return DomainInterfaces{}, fmt.Errorf("%w: interface address source %q is unavailable", ErrUnsupported, source)
+		}
+		return DomainInterfaces{}, fmt.Errorf("get domain %q interface addresses: %w", name, err)
+	}
+	result := DomainInterfaces{Name: name, UUID: uuid, Source: source, Interfaces: []DomainInterface{}}
+	for _, item := range items {
+		iface := DomainInterface{Name: item.Name, MAC: item.Hwaddr, Addresses: []IPAddress{}}
+		for _, address := range item.Addrs {
+			family := "unknown"
+			if address.Type == libvirt.IP_ADDR_TYPE_IPV4 {
+				family = "ipv4"
+			} else if address.Type == libvirt.IP_ADDR_TYPE_IPV6 {
+				family = "ipv6"
+			}
+			iface.Addresses = append(iface.Addresses, IPAddress{Family: family, Address: address.Addr, Prefix: address.Prefix})
+		}
+		result.Interfaces = append(result.Interfaces, iface)
+	}
+	return result, nil
+}
+
 func deviceTargets(domain *libvirt.Domain) ([]string, []string, error) {
 	description, err := domain.GetXMLDesc(0)
 	if err != nil {

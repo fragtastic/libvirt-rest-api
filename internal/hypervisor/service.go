@@ -16,11 +16,18 @@ var (
 type DomainFilter uint32
 
 type PowerMode string
+type InterfaceAddressSource string
 
 const (
 	PowerModeDefault    PowerMode = "default"
 	PowerModeACPI       PowerMode = "acpi"
 	PowerModeGuestAgent PowerMode = "guest-agent"
+)
+
+const (
+	InterfaceSourceLease InterfaceAddressSource = "lease"
+	InterfaceSourceAgent InterfaceAddressSource = "agent"
+	InterfaceSourceARP   InterfaceAddressSource = "arp"
 )
 
 const (
@@ -110,6 +117,22 @@ type DomainStats struct {
 	Disks      []BlockStats      `json:"disks"`
 	Interfaces []NetworkStats    `json:"interfaces"`
 }
+type IPAddress struct {
+	Family  string `json:"family"`
+	Address string `json:"address"`
+	Prefix  uint   `json:"prefix"`
+}
+type DomainInterface struct {
+	Name      string      `json:"name"`
+	MAC       string      `json:"mac"`
+	Addresses []IPAddress `json:"addresses"`
+}
+type DomainInterfaces struct {
+	Name       string                 `json:"name"`
+	UUID       string                 `json:"uuid"`
+	Source     InterfaceAddressSource `json:"source"`
+	Interfaces []DomainInterface      `json:"interfaces"`
+}
 
 type Service interface {
 	Ready(context.Context) error
@@ -118,6 +141,7 @@ type Service interface {
 	ListDomains(context.Context, DomainFilter) ([]Domain, error)
 	Domain(context.Context, string) (DomainInfo, error)
 	DomainStats(context.Context, string) (DomainStats, error)
+	DomainInterfaces(context.Context, string, InterfaceAddressSource) (DomainInterfaces, error)
 	DomainXML(context.Context, string) (string, error)
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)

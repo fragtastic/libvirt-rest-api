@@ -71,6 +71,7 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/api/v1/vms", scopeRead, s.listVMs)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/stats", scopeRead, s.vmStats)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/interfaces", scopeRead, s.vmInterfaces)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/xml", scopeRead, s.vmXML)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/viewer", scopeRead, s.vmViewer)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
@@ -197,6 +198,23 @@ func (s *Server) vmStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) vmInterfaces(w http.ResponseWriter, r *http.Request) {
+	source := hypervisor.InterfaceAddressSource(strings.ToLower(r.URL.Query().Get("source")))
+	if source == "" {
+		source = hypervisor.InterfaceSourceLease
+	}
+	if source != hypervisor.InterfaceSourceLease && source != hypervisor.InterfaceSourceAgent && source != hypervisor.InterfaceSourceARP {
+		writeError(w, http.StatusBadRequest, "invalid_source", "source must be lease, agent, or arp")
+		return
+	}
+	interfaces, err := s.hypervisor.DomainInterfaces(r.Context(), r.PathValue("identifier"), source)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, interfaces)
 }
 
 func (s *Server) vmXML(w http.ResponseWriter, r *http.Request) {
