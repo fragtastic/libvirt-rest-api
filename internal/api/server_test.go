@@ -26,12 +26,18 @@ func (f *fakeHypervisor) Ready(context.Context) error { return f.err }
 func (f *fakeHypervisor) Host(context.Context) (hypervisor.Host, error) {
 	return hypervisor.Host{Name: "test-host", CPUs: 8}, f.err
 }
+func (f *fakeHypervisor) HostStats(context.Context) (hypervisor.HostStats, error) {
+	return hypervisor.HostStats{MemoryKiB: map[string]uint64{"total": 1024}}, f.err
+}
 func (f *fakeHypervisor) ListDomains(_ context.Context, filter hypervisor.DomainFilter) ([]hypervisor.Domain, error) {
 	f.filter = filter
 	return f.domains, f.err
 }
 func (f *fakeHypervisor) Domain(context.Context, string) (hypervisor.DomainInfo, error) {
 	return f.domain, f.err
+}
+func (f *fakeHypervisor) DomainStats(context.Context, string) (hypervisor.DomainStats, error) {
+	return hypervisor.DomainStats{Name: "web", MemoryKiB: map[string]uint64{}, Disks: []hypervisor.BlockStats{}, Interfaces: []hypervisor.NetworkStats{}}, f.err
 }
 func (f *fakeHypervisor) DomainXML(context.Context, string) (string, error) {
 	return "<domain><name>test</name></domain>", f.err
@@ -121,6 +127,8 @@ func TestVMRoutes(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/host", "application/json", `"name":"test-host"`},
 		{http.MethodGet, "/api/v1/vms/web", "application/json", `"uuid":"52d7a2fe-1942-4a89-93d9-9a57d8f67b6d"`},
+		{http.MethodGet, "/api/v1/host/stats", "application/json", `"total":1024`},
+		{http.MethodGet, "/api/v1/vms/web/stats", "application/json", `"name":"web"`},
 		{http.MethodGet, "/api/v1/vms/web/xml", "application/xml", "<domain>"},
 		{http.MethodGet, "/api/v1/vms/web/viewer", "application/json", `"port":5900`},
 		{http.MethodGet, "/api/v1/vms/web/screenshot", "image/png", "png"},

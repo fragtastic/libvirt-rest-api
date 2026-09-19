@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"time"
 
 	"libvirt.org/go/libvirt"
 )
@@ -67,6 +68,44 @@ func (l *Libvirt) Host(context.Context) (Host, error) {
 	}, nil
 }
 
+func (l *Libvirt) HostStats(context.Context) (HostStats, error) {
+	cpu, err := l.connection.GetCPUStats(int(libvirt.NODE_CPU_STATS_ALL_CPUS), 0)
+	if err != nil {
+		return HostStats{}, fmt.Errorf("get host CPU statistics: %w", err)
+	}
+	memory, err := l.connection.GetMemoryStats(libvirt.NODE_MEMORY_STATS_ALL_CELLS, 0)
+	if err != nil {
+		return HostStats{}, fmt.Errorf("get host memory statistics: %w", err)
+	}
+	result := HostStats{SampledAt: time.Now().UTC(), MemoryKiB: map[string]uint64{}}
+	if cpu.KernelSet || cpu.UserSet {
+		total := cpu.Kernel + cpu.User
+		result.CPU.CPUTimeNS = &total
+	}
+	if cpu.UserSet {
+		result.CPU.UserTimeNS = uint64Ptr(cpu.User)
+	}
+	if cpu.KernelSet {
+		result.CPU.SystemTimeNS = uint64Ptr(cpu.Kernel)
+	}
+	if memory.TotalSet {
+		result.MemoryKiB["total"] = memory.Total
+	}
+	if memory.FreeSet {
+		result.MemoryKiB["free"] = memory.Free
+	}
+	if memory.AvailableSet {
+		result.MemoryKiB["available"] = memory.Available
+	}
+	if memory.BuffersSet {
+		result.MemoryKiB["buffers"] = memory.Buffers
+	}
+	if memory.CachedSet {
+		result.MemoryKiB["cached"] = memory.Cached
+	}
+	return result, nil
+}
+
 func (l *Libvirt) ListDomains(_ context.Context, filter DomainFilter) ([]Domain, error) {
 	flags := libvirt.ConnectListAllDomainsFlags(0)
 	switch filter {
@@ -114,6 +153,145 @@ func (l *Libvirt) Domain(_ context.Context, identifier string) (DomainInfo, erro
 		Domain: summary, StateCode: int(info.State), MaxMemoryKiB: info.MaxMem,
 		MemoryKiB: info.Memory, VCPUs: info.NrVirtCpu, CPUTimeNS: info.CpuTime,
 	}, nil
+}
+
+func (l *Libvirt) DomainStats(_ context.Context, identifier string) (DomainStats, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return DomainStats{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return DomainStats{}, err
+	}
+	active, err := domain.IsActive()
+	if err != nil {
+		return DomainStats{}, fmt.Errorf("get domain %q activity: %w", name, err)
+	}
+	if !active {
+		return DomainStats{}, fmt.Errorf("%w: statistics require active domain %q", ErrConflict, name)
+	}
+	state, _, err := domain.GetState()
+	if err != nil {
+		return DomainStats{}, fmt.Errorf("get domain %q state: %w", name, err)
+	}
+	result := DomainStats{SampledAt: time.Now().UTC(), Name: name, UUID: uuid, State: StateName(int(state)), MemoryKiB: map[string]uint64{}, Disks: []BlockStats{}, Interfaces: []NetworkStats{}}
+	cpu, err := domain.GetCPUStats(-1, 1, 0)
+	if err != nil {
+		return DomainStats{}, fmt.Errorf("get domain %q CPU statistics: %w", name, err)
+	}
+	if len(cpu) > 0 {
+		if cpu[0].CpuTimeSet {
+			result.CPU.CPUTimeNS = uint64Ptr(cpu[0].CpuTime)
+		}
+		if cpu[0].UserTimeSet {
+			result.CPU.UserTimeNS = uint64Ptr(cpu[0].UserTime)
+		}
+		if cpu[0].SystemTimeSet {
+			result.CPU.SystemTimeNS = uint64Ptr(cpu[0].SystemTime)
+		}
+	}
+	memory, err := domain.MemoryStats(uint32(libvirt.DOMAIN_MEMORY_STAT_NR), 0)
+	if err != nil {
+		return DomainStats{}, fmt.Errorf("get domain %q memory statistics: %w", name, err)
+	}
+	for _, stat := range memory {
+		result.MemoryKiB[memoryStatName(stat.Tag)] = stat.Val
+	}
+	disks, interfaces, err := deviceTargets(domain)
+	if err != nil {
+		return DomainStats{}, err
+	}
+	for _, device := range disks {
+		stats, err := domain.BlockStats(device)
+		if err != nil {
+			return DomainStats{}, fmt.Errorf("get domain %q block statistics for %s: %w", name, device, err)
+		}
+		result.Disks = append(result.Disks, BlockStats{Device: device, ReadBytes: int64PtrIf(stats.RdBytes, stats.RdBytesSet), ReadRequests: int64PtrIf(stats.RdReq, stats.RdReqSet), WriteBytes: int64PtrIf(stats.WrBytes, stats.WrBytesSet), WriteRequests: int64PtrIf(stats.WrReq, stats.WrReqSet)})
+	}
+	for _, device := range interfaces {
+		stats, err := domain.InterfaceStats(device)
+		if err != nil {
+			return DomainStats{}, fmt.Errorf("get domain %q interface statistics for %s: %w", name, device, err)
+		}
+		result.Interfaces = append(result.Interfaces, NetworkStats{Device: device, RXBytes: int64PtrIf(stats.RxBytes, stats.RxBytesSet), RXPackets: int64PtrIf(stats.RxPackets, stats.RxPacketsSet), TXBytes: int64PtrIf(stats.TxBytes, stats.TxBytesSet), TXPackets: int64PtrIf(stats.TxPackets, stats.TxPacketsSet)})
+	}
+	return result, nil
+}
+
+func deviceTargets(domain *libvirt.Domain) ([]string, []string, error) {
+	description, err := domain.GetXMLDesc(0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get domain XML for statistics: %w", err)
+	}
+	return targetsFromXML(description)
+}
+
+func targetsFromXML(description string) ([]string, []string, error) {
+	var document struct {
+		Devices struct {
+			Disks []struct {
+				Device string `xml:"device,attr"`
+				Target struct {
+					Dev string `xml:"dev,attr"`
+				} `xml:"target"`
+			} `xml:"disk"`
+			Interfaces []struct {
+				Target struct {
+					Dev string `xml:"dev,attr"`
+				} `xml:"target"`
+			} `xml:"interface"`
+		} `xml:"devices"`
+	}
+	if err := xml.Unmarshal([]byte(description), &document); err != nil {
+		return nil, nil, err
+	}
+	disks := []string{}
+	interfaces := []string{}
+	for _, disk := range document.Devices.Disks {
+		if disk.Device == "disk" && disk.Target.Dev != "" {
+			disks = append(disks, disk.Target.Dev)
+		}
+	}
+	for _, iface := range document.Devices.Interfaces {
+		if iface.Target.Dev != "" {
+			interfaces = append(interfaces, iface.Target.Dev)
+		}
+	}
+	return disks, interfaces, nil
+}
+
+func uint64Ptr(value uint64) *uint64 { return &value }
+func int64PtrIf(value int64, set bool) *int64 {
+	if !set {
+		return nil
+	}
+	return &value
+}
+func memoryStatName(tag int32) string {
+	switch libvirt.DomainMemoryStatTags(tag) {
+	case libvirt.DOMAIN_MEMORY_STAT_SWAP_IN:
+		return "swap_in"
+	case libvirt.DOMAIN_MEMORY_STAT_SWAP_OUT:
+		return "swap_out"
+	case libvirt.DOMAIN_MEMORY_STAT_MAJOR_FAULT:
+		return "major_fault"
+	case libvirt.DOMAIN_MEMORY_STAT_MINOR_FAULT:
+		return "minor_fault"
+	case libvirt.DOMAIN_MEMORY_STAT_UNUSED:
+		return "unused"
+	case libvirt.DOMAIN_MEMORY_STAT_AVAILABLE:
+		return "available"
+	case libvirt.DOMAIN_MEMORY_STAT_ACTUAL_BALLOON:
+		return "actual_balloon"
+	case libvirt.DOMAIN_MEMORY_STAT_RSS:
+		return "rss"
+	case libvirt.DOMAIN_MEMORY_STAT_USABLE:
+		return "usable"
+	default:
+		return fmt.Sprintf("tag_%d", tag)
+	}
 }
 
 func (l *Libvirt) DomainXML(_ context.Context, identifier string) (string, error) {

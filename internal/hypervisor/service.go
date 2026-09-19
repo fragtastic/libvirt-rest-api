@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 var (
@@ -75,11 +76,48 @@ type Screenshot struct {
 	Data        io.ReadCloser
 }
 
+type CPUStats struct {
+	CPUTimeNS    *uint64 `json:"cpu_time_ns,omitempty"`
+	UserTimeNS   *uint64 `json:"user_time_ns,omitempty"`
+	SystemTimeNS *uint64 `json:"system_time_ns,omitempty"`
+}
+type HostStats struct {
+	SampledAt time.Time         `json:"sampled_at"`
+	CPU       CPUStats          `json:"cpu"`
+	MemoryKiB map[string]uint64 `json:"memory_kib"`
+}
+type BlockStats struct {
+	Device        string `json:"device"`
+	ReadBytes     *int64 `json:"read_bytes,omitempty"`
+	ReadRequests  *int64 `json:"read_requests,omitempty"`
+	WriteBytes    *int64 `json:"write_bytes,omitempty"`
+	WriteRequests *int64 `json:"write_requests,omitempty"`
+}
+type NetworkStats struct {
+	Device    string `json:"device"`
+	RXBytes   *int64 `json:"rx_bytes,omitempty"`
+	RXPackets *int64 `json:"rx_packets,omitempty"`
+	TXBytes   *int64 `json:"tx_bytes,omitempty"`
+	TXPackets *int64 `json:"tx_packets,omitempty"`
+}
+type DomainStats struct {
+	SampledAt  time.Time         `json:"sampled_at"`
+	Name       string            `json:"name"`
+	UUID       string            `json:"uuid"`
+	State      string            `json:"state"`
+	CPU        CPUStats          `json:"cpu"`
+	MemoryKiB  map[string]uint64 `json:"memory_kib"`
+	Disks      []BlockStats      `json:"disks"`
+	Interfaces []NetworkStats    `json:"interfaces"`
+}
+
 type Service interface {
 	Ready(context.Context) error
 	Host(context.Context) (Host, error)
+	HostStats(context.Context) (HostStats, error)
 	ListDomains(context.Context, DomainFilter) ([]Domain, error)
 	Domain(context.Context, string) (DomainInfo, error)
+	DomainStats(context.Context, string) (DomainStats, error)
 	DomainXML(context.Context, string) (string, error)
 	Viewer(context.Context, string) (Viewer, error)
 	Screenshot(context.Context, string) (Screenshot, error)

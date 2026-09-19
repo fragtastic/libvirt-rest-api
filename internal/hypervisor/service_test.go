@@ -66,6 +66,13 @@ func TestViewerFromXML(t *testing.T) {
 	}
 }
 
+func TestTargetsFromXML(t *testing.T) {
+	disks, interfaces, err := targetsFromXML(`<domain><devices><disk device="disk"><target dev="vda"/></disk><disk device="cdrom"><target dev="sda"/></disk><interface><target dev="vnet0"/></interface></devices></domain>`)
+	if err != nil || len(disks) != 1 || disks[0] != "vda" || len(interfaces) != 1 || interfaces[0] != "vnet0" {
+		t.Fatalf("disks=%v interfaces=%v error=%v", disks, interfaces, err)
+	}
+}
+
 func TestNormalizeDomainID(t *testing.T) {
 	if got := normalizeDomainID(42); got != 42 {
 		t.Fatalf("normalizeDomainID(42) = %d", got)

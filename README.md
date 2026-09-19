@@ -84,8 +84,10 @@ stable envelope:
 | `GET` | `/healthz` | Process liveness; intentionally does not contact libvirt or require auth |
 | `GET` | `/readyz` | Libvirt connection readiness; does not require auth |
 | `GET` | `/api/v1/host` | Hypervisor host information |
+| `GET` | `/api/v1/host/stats` | Timestamped cumulative host CPU and memory counters |
 | `GET` | `/api/v1/vms?state=all` | List domains; state may be `all`, `active`, or `inactive` |
 | `GET` | `/api/v1/vms/{identifier}` | Domain state and resource information |
+| `GET` | `/api/v1/vms/{identifier}/stats` | Timestamped cumulative CPU, memory, disk, and network counters |
 | `GET` | `/api/v1/vms/{identifier}/xml` | Raw libvirt domain XML as `application/xml` |
 | `GET` | `/api/v1/vms/{identifier}/viewer` | First configured graphics listener |
 | `GET` | `/api/v1/vms/{identifier}/screenshot` | Current display in libvirt's native image format |

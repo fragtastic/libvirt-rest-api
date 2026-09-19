@@ -67,8 +67,10 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/healthz", scopePublic, s.health)
 	s.handle(routes, http.MethodGet, "/readyz", scopePublic, s.ready)
 	s.handle(routes, http.MethodGet, "/api/v1/host", scopeRead, s.host)
+	s.handle(routes, http.MethodGet, "/api/v1/host/stats", scopeRead, s.hostStats)
 	s.handle(routes, http.MethodGet, "/api/v1/vms", scopeRead, s.listVMs)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/stats", scopeRead, s.vmStats)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/xml", scopeRead, s.vmXML)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/viewer", scopeRead, s.vmViewer)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
@@ -153,6 +155,15 @@ func (s *Server) host(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, host)
 }
 
+func (s *Server) hostStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.hypervisor.HostStats(r.Context())
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (s *Server) listVMs(w http.ResponseWriter, r *http.Request) {
 	filter, ok := parseDomainFilter(r.URL.Query().Get("state"))
 	if !ok {
@@ -177,6 +188,15 @@ func (s *Server) vm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, vm)
+}
+
+func (s *Server) vmStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.hypervisor.DomainStats(r.Context(), r.PathValue("identifier"))
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func (s *Server) vmXML(w http.ResponseWriter, r *http.Request) {
