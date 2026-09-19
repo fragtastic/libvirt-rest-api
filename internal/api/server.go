@@ -72,6 +72,8 @@ func New(service hypervisor.Service, options Options) http.Handler {
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}", scopeRead, s.vm)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/stats", scopeRead, s.vmStats)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/interfaces", scopeRead, s.vmInterfaces)
+	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/autostart", scopeRead, s.vmAutostart)
+	s.handle(routes, http.MethodPatch, "/api/v1/vms/{identifier}/autostart", scopeAdmin, s.setVMAutostart)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/xml", scopeRead, s.vmXML)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/viewer", scopeRead, s.vmViewer)
 	s.handle(routes, http.MethodGet, "/api/v1/vms/{identifier}/screenshot", scopeRead, s.vmScreenshot)
@@ -215,6 +217,33 @@ func (s *Server) vmInterfaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, interfaces)
+}
+
+func (s *Server) vmAutostart(w http.ResponseWriter, r *http.Request) {
+	value, err := s.hypervisor.Autostart(r.Context(), r.PathValue("identifier"))
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (s *Server) setVMAutostart(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must contain boolean enabled")
+		return
+	}
+	value, err := s.hypervisor.SetAutostart(r.Context(), r.PathValue("identifier"), *request.Enabled)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
 }
 
 func (s *Server) vmXML(w http.ResponseWriter, r *http.Request) {
@@ -421,7 +450,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

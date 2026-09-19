@@ -42,6 +42,12 @@ func (f *fakeHypervisor) DomainStats(context.Context, string) (hypervisor.Domain
 func (f *fakeHypervisor) DomainInterfaces(_ context.Context, _ string, source hypervisor.InterfaceAddressSource) (hypervisor.DomainInterfaces, error) {
 	return hypervisor.DomainInterfaces{Name: "web", Source: source, Interfaces: []hypervisor.DomainInterface{}}, f.err
 }
+func (f *fakeHypervisor) Autostart(context.Context, string) (hypervisor.Autostart, error) {
+	return hypervisor.Autostart{Name: "web", Enabled: true}, f.err
+}
+func (f *fakeHypervisor) SetAutostart(_ context.Context, _ string, enabled bool) (hypervisor.Autostart, error) {
+	return hypervisor.Autostart{Name: "web", Enabled: enabled}, f.err
+}
 func (f *fakeHypervisor) DomainXML(context.Context, string) (string, error) {
 	return "<domain><name>test</name></domain>", f.err
 }
@@ -133,6 +139,7 @@ func TestVMRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/host/stats", "application/json", `"total":1024`},
 		{http.MethodGet, "/api/v1/vms/web/stats", "application/json", `"name":"web"`},
 		{http.MethodGet, "/api/v1/vms/web/interfaces?source=agent", "application/json", `"source":"agent"`},
+		{http.MethodGet, "/api/v1/vms/web/autostart", "application/json", `"enabled":true`},
 		{http.MethodGet, "/api/v1/vms/web/xml", "application/xml", "<domain>"},
 		{http.MethodGet, "/api/v1/vms/web/viewer", "application/json", `"port":5900`},
 		{http.MethodGet, "/api/v1/vms/web/screenshot", "image/png", "png"},
@@ -152,6 +159,14 @@ func TestRejectsInvalidInterfaceSource(t *testing.T) {
 	response := httptest.NewRecorder()
 	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/vms/web/interfaces?source=magic", nil))
 	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestSetAutostart(t *testing.T) {
+	response := httptest.NewRecorder()
+	New(&fakeHypervisor{}, Options{}).ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/v1/vms/web/autostart", strings.NewReader(`{"enabled":false}`)))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"enabled":false`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

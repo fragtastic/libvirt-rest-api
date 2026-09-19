@@ -263,6 +263,44 @@ func (l *Libvirt) DomainInterfaces(_ context.Context, identifier string, source 
 	return result, nil
 }
 
+func (l *Libvirt) Autostart(_ context.Context, identifier string) (Autostart, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return Autostart{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return Autostart{}, err
+	}
+	enabled, err := domain.GetAutostart()
+	if err != nil {
+		return Autostart{}, fmt.Errorf("get domain %q autostart: %w", name, err)
+	}
+	return Autostart{Name: name, UUID: uuid, Enabled: enabled}, nil
+}
+
+func (l *Libvirt) SetAutostart(_ context.Context, identifier string, enabled bool) (Autostart, error) {
+	domain, err := l.lookup(identifier)
+	if err != nil {
+		return Autostart{}, err
+	}
+	defer domain.Free()
+	name, uuid, err := domainIdentity(domain)
+	if err != nil {
+		return Autostart{}, err
+	}
+	unlock := l.lockDomainAction(uuid)
+	defer unlock()
+	if err := domain.SetAutostart(enabled); err != nil {
+		if errors.Is(err, libvirt.ERR_NO_SUPPORT) || errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED) {
+			return Autostart{}, fmt.Errorf("%w: domain %q does not support autostart", ErrUnsupported, name)
+		}
+		return Autostart{}, fmt.Errorf("set domain %q autostart: %w", name, err)
+	}
+	return Autostart{Name: name, UUID: uuid, Enabled: enabled}, nil
+}
+
 func deviceTargets(domain *libvirt.Domain) ([]string, []string, error) {
 	description, err := domain.GetXMLDesc(0)
 	if err != nil {
